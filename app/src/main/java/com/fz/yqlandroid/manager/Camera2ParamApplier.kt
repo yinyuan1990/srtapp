@@ -120,6 +120,19 @@ object Camera2ParamApplier {
         }
     }
 
+    /**
+     * §134 SRT直推：同一套算法直接写进调用方自己的 CaptureRequest（不反射 WebRTC 会话）。
+     * 顺序与 [apply] 相同：曝光/快门 → AE 帧率区间 → 对焦 → 变焦 → 白平衡 → 防抖。
+     */
+    fun applyToBuilder(builder: CaptureRequest.Builder, characteristics: CameraCharacteristics, p: Params) {
+        applyExposureAndShutter(builder, characteristics, p)
+        applyFpsRange(builder, characteristics, p)
+        applyFocus(builder, characteristics, p)
+        applyZoom(builder, characteristics, p)
+        applyWhiteBalance(builder, characteristics, p)
+        if (p.disableStabilization) applyStabilizationOff(builder, characteristics)
+    }
+
     // ===== §129 防抖关闭（SRT 模式） =====
     private var stabilizationLogged = false
     private fun applyStabilizationOff(b: CaptureRequest.Builder, c: CameraCharacteristics) {

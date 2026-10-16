@@ -888,7 +888,17 @@ data class LoginResponse(
     // ⭐ §77 自带摄像头 5 档「分辨率/帧率/码率」配置（后端运营配置下发，覆盖本地默认值）。
     //   用 JsonElement 原样接住再 toString() 交给 LadderConfigStore 解析，
     //   免得为了几个数字在这里堆五层嵌套 data class。字段缺省(老后端)=null=用内置默认。
-    val videoLadder: com.google.gson.JsonElement? = null
+    val videoLadder: com.google.gson.JsonElement? = null,
+    // ⭐ §134 SRT直推：MediaMTX 节点 {host, port}（推/拉同一台）+ 编码参数 srtParams（结构见 SrtDirectParams）。
+    //   老后端缺省 null → 节点用内置 118.178.33.144:8890，参数用内置默认。
+    val srtServer: SrtServer? = null,
+    val srtParams: com.google.gson.JsonElement? = null
+)
+
+// ⭐ §134 SRT直推节点
+data class SrtServer(
+    val host: String? = null,
+    val port: Int? = null
 )
 
 // ⭐ 需求#13：三端最新版本号

@@ -85,6 +85,8 @@ fun StreamingScreen(
     // ⭐ §132 SRT 版（本版默认）发热对齐 3840(test-android/silu)：不强制常亮、无静音音频保活，
     //   锁屏/熄屏照推（前台服务 camera + WakeLock）。force_webrtc 回退时维持原行为。
     val srtMode = remember { WebRTCManager.isSrtTransport(context) }
+    // ⭐ §134 SRT直推（默认 SRT + 自带摄像头）：预览用 SurfaceView 挂进 Camera2 会话
+    val srtDirect = remember { WebRTCManager.isSrtDirect(context) }
 
     // 🖥️ 前台常亮（对标 iOS isIdleTimerDisabled）：进入推流页时禁止自动息屏，离开时恢复
     //   §132：SRT 模式不加（屏幕按系统设置自动熄灭，熄屏后预览不再绘制，推流继续）
@@ -442,7 +444,10 @@ fun StreamingScreen(
             }
     ) {
         // 相机预览
-        if (permissionsState.allPermissionsGranted) {
+        if (permissionsState.allPermissionsGranted && srtDirect) {
+            // ⭐ §134 SRT直推：SurfaceView 直接作为 Camera2 会话输出（不经 WebRTC/GL）
+            SrtDirectPreview(webRTCManager)
+        } else if (permissionsState.allPermissionsGranted) {
             AndroidView(
                 factory = { ctx ->
                     SurfaceViewRenderer(ctx).also { renderer ->
@@ -1147,6 +1152,64 @@ private fun QualityRadioItem(
             // 等分宽度下强制单行：档位名都是 2~3 个字，绝不允许折行把这一排撑高
             maxLines = 1,
             softWrap = false
+        )
+    }
+}
+
+/**
+ * §134 SRT直推预览：SurfaceView 的 Surface 登记到 [com.fz.yqlandroid.manager.srtdirect.PreviewRegistry]，
+ * 摄像头会话据此「编码器 + 预览」/「仅编码器」（界面不可见/熄屏时只写编码器，§132 发热对齐 3840）。
+ *
+ * - 缓冲尺寸用 setFixedSize 固定为引擎选的预览尺寸（同编码宽高比、≤1080p，Camera2 SurfaceView 上限）；
+ * - 缓冲是横向（传感器原生），竖屏界面里系统按传感器方向转正显示 → 显示宽高比取 高:宽。
+ */
+@Composable
+private fun SrtDirectPreview(webRTCManager: WebRTCManager) {
+    var previewSize by remember { mutableStateOf<android.util.Size?>(null) }
+    LaunchedEffect(Unit) {
+        try {
+            webRTCManager.startPreview()
+        } catch (e: Exception) {
+            Log.e("StreamingScreen", "SRT直推预览启动失败: ${e.message}")
+        }
+        webRTCManager.srtPreviewSize?.collect { previewSize = it }
+    }
+    DisposableEffect(Unit) {
+        onDispose { com.fz.yqlandroid.manager.srtdirect.PreviewRegistry.set(null) }
+    }
+    val ps = previewSize
+    val ratio = if (ps != null && ps.width > 0) ps.height.toFloat() / ps.width else 3f / 4f
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        AndroidView(
+            factory = { ctx ->
+                android.view.SurfaceView(ctx).apply {
+                    holder.addCallback(object : android.view.SurfaceHolder.Callback {
+                        override fun surfaceCreated(holder: android.view.SurfaceHolder) {}
+
+                        override fun surfaceChanged(holder: android.view.SurfaceHolder, format: Int, width: Int, height: Int) {
+                            // 只在缓冲已是固定尺寸时登记，避免先按 View 尺寸建会话失败一轮
+                            val want = tag as? android.util.Size
+                            if (want == null || (width == want.width && height == want.height)) {
+                                com.fz.yqlandroid.manager.srtdirect.PreviewRegistry.set(holder.surface)
+                            }
+                        }
+
+                        override fun surfaceDestroyed(holder: android.view.SurfaceHolder) {
+                            com.fz.yqlandroid.manager.srtdirect.PreviewRegistry.set(null)
+                        }
+                    })
+                }
+            },
+            update = { view ->
+                val p = previewSize
+                if (p != null && view.tag != p) {
+                    view.tag = p
+                    view.holder.setFixedSize(p.width, p.height)
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(ratio)
         )
     }
 }

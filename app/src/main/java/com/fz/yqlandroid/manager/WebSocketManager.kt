@@ -42,6 +42,9 @@ class WebSocketManager private constructor() {
         @Volatile var networkQuality: String = "unknown"
         @Volatile var packetLoss: Double = 0.0
         @Volatile var rtt: Int = 0
+        // ⭐ §134 SRT直推（connectstype=3）：PC 去哪台 MediaMTX 拉 srt://host:port?streamid=read:<streamKey>
+        @Volatile var srtPlayHost: String = ""
+        @Volatile var srtPlayPort: Int = 0
     }
     
     // 连接状态
@@ -659,7 +662,8 @@ class WebSocketManager private constructor() {
         // ⭐ 连接方式由 WebRTCManager 实时决策（0=SRS, 1=P2P），PC 跟随 connectstype 切换（与 iOS 一致）
         val connectstype = WebRTCManager.effectiveConnectstype
         // §129：2=SRT（SRT→SRS 桥接，PC 照旧走 SRS/WHEP 拉流）
-        val connectMode = when (connectstype) { 1 -> "p2p"; 2 -> "srt"; else -> "srs" }
+        // §134：3=SRT直推到 MediaMTX（PC GStreamer srtsrc 直拉 srtPlayHost:srtPlayPort）
+        val connectMode = when (connectstype) { 1 -> "p2p"; 2 -> "srt"; 3 -> "srt-direct"; else -> "srs" }
         
         val state = mutableMapOf<String, Any>(
             "networkType" to getNetworkType(),
@@ -683,6 +687,8 @@ class WebSocketManager private constructor() {
             "networkQuality" to networkQuality,
             "packetLoss" to packetLoss,
             "rtt" to rtt,
+            "srtPlayHost" to (if (connectstype == 3) srtPlayHost else ""),
+            "srtPlayPort" to (if (connectstype == 3) srtPlayPort else 0),
             "deviceType" to mapOf(
                 "os" to "Android ${Build.VERSION.RELEASE}",
                 "model" to "${Build.MANUFACTURER} ${Build.MODEL}"

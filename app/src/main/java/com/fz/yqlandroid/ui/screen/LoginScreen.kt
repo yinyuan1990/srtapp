@@ -483,6 +483,12 @@ fun LoginScreen(
                                     com.fz.yqlandroid.manager.LadderConfigStore.saveFromLogin(
                                         context, response.videoLadder?.toString())
 
+                                    // ⭐ §134 SRT直推：节点 + 编码参数（没下发=内置默认；下发 null 清掉旧覆盖）
+                                    com.fz.yqlandroid.manager.srtdirect.SrtDirectParams.saveServer(
+                                        context, response.srtServer?.host, response.srtServer?.port)
+                                    com.fz.yqlandroid.manager.srtdirect.SrtDirectParams.saveFromLogin(
+                                        context, response.srtParams?.toString())
+
                                     // 🔥 Step 3: 更新ViewModel
                                     appViewModel.loginSuccess(
                                         token = response.token,
