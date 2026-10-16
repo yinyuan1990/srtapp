@@ -75,8 +75,6 @@ fun LoginScreen(
     //   登录页保留"外接OTG"按钮作为**下载入口**：点击弹框 → 直接下载 OTG 版 APK
     //  （下载地址取总后台「App更新配置」的 otg 块，版本独立）。代码同构，OTG 代码保留不删。
     var selectedCameraMode by remember { mutableStateOf("builtin") }
-    // ⭐ §129 推流方式："webrtc"=原 WebRTC 推 SRS（默认）/ "srt"=SRT 推 SRS（测试，silu 编码参数）
-    var selectedPublishTransport by remember { mutableStateOf("webrtc") }
     // ⭐ §130 登录前权限引导弹框
     var showPermissionGuide by remember { mutableStateOf(false) }
     // OTG 下载弹框
@@ -110,8 +108,6 @@ fun LoginScreen(
         }
         // ⭐ 主版：模式恒为 builtin（不读旧记忆——老版本可能存过 otg，恢复后没有入口改回来）
         selectedCameraMode = "builtin"
-        // ⭐ §129 推流方式记忆（默认 WebRTC）
-        selectedPublishTransport = if (prefs.getString("selected_publish_transport", "webrtc") == "srt") "srt" else "webrtc"
         // ⭐ 强制更新检查（公共接口，失败放行不拦门）
         forceUpdate = com.fz.yqlandroid.manager.AppUpdateManager.checkForceUpdate(context)
     }
@@ -344,42 +340,6 @@ fun LoginScreen(
                             }
                         }
                     }
-
-                    // ⭐ §129 推流方式：WebRTC（默认）/ SRT(测试)
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 30.dp),
-                        color = Color(0xFFF0F0F0)
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "推流方式",
-                            fontSize = 16.sp,
-                            color = Color(0xFF1A1A1A)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        listOf("webrtc" to "WebRTC", "srt" to "SRT(测试)").forEach { (mode, label) ->
-                            val selected = selectedPublishTransport == mode
-                            Box(
-                                modifier = Modifier
-                                    .padding(end = 8.dp)
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(if (selected) Color(0xFF65AEF7) else Color(0xFFF0F0F0))
-                                    .clickable { selectedPublishTransport = mode }
-                                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = label,
-                                    fontSize = 14.sp,
-                                    color = if (selected) Color.White else Color(0xFF666666)
-                                )
-                            }
-                        }
-                    }
                 }
             }
             
@@ -442,7 +402,6 @@ fun LoginScreen(
                                         // ⭐ §53.4：线路/编码已不由用户选（登录页也不再显示），
                                         //   这里只记住摄像头模式（自带 / 外接OTG）。
                                         putString("selected_camera_mode", selectedCameraMode)
-                                        putString("selected_publish_transport", selectedPublishTransport)
                                         apply()
                                     }
                                     
@@ -469,8 +428,8 @@ fun LoginScreen(
                                         putString("connect_mode", backendConnectMode)
                                         // ⭐ 摄像头模式运行时决策值（WebRTCManager.startPreview 读取，第四十八章）
                                         putString("camera_mode", selectedCameraMode)
-                                        // ⭐ §129 推流方式运行时值（WebRTCManager.startPublish 读取）
-                                        putString("publish_transport", selectedPublishTransport)
+                                        // ⭐ §131 推流方式固定 SRT（登录页不再显示选项），清掉 §129 测试期的旧选择
+                                        remove("publish_transport")
                                         // ⭐ §53.4.4 编码默认值改由总后台配置（本机硬编或观看端内核
                                         //   不支持时由 SessionPolicy/H265Support 自动回退 h264）。
                                         //   §56.27：产品默认改 h264——字段缺省（老后端）也按 h264，与后端部署无关。

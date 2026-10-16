@@ -63,7 +63,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
     }
 
     // ⭐ 连接模式（静态：登录时 connect_mode 决定，推流期间不自动切换，与 iOS decideMode 一致）
-    // ⭐ §129 SRT：登录页「推流方式=SRT(测试)」时走 SRT→SRS（不建 PeerConnection，connectstype=2）
+    // ⭐ §129/§131 SRT：默认走 SRT→SRS（不建 PeerConnection，connectstype=2）；token_prefs.force_webrtc=true 才回原 WebRTC
     enum class ConnMode { SRS, P2P, SRT }
     @Volatile var currentConnMode: ConnMode = ConnMode.SRS
         private set
@@ -893,7 +893,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         
         bitrateScaleIdx = 0   // 新推流会话：码率阶梯回满档（自适应从头开始）
 
-        // ⭐ §129 SRT 测试模式（登录页选择）：不走 SessionPolicy/PeerConnection，直接 SRT 推到同一台 SRS
+        // ⭐ §129/§131 SRT（默认，force_webrtc 才回退）：不走 SessionPolicy/PeerConnection，直接 SRT 推到同一台 SRS
         if (isSrtTransportSelected()) {
             startSrtPublish()   // 异步：publishStarting 由其 finally 清零
             return
@@ -1070,13 +1070,16 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         }
     }
     
-    // MARK: - ⭐ §129 SRT 推流（测试模式，登录页「推流方式=SRT」）
+    // MARK: - ⭐ §129/§131 SRT 推流（默认链路）
 
-    /** 登录页选的推流方式（token_prefs.publish_transport，登录时写入；默认 webrtc） */
+    /**
+     * §131 推流方式默认 SRT（登录页不显示选项）。
+     * 回退通道：token_prefs.force_webrtc=true 才走原 WebRTC（无界面，留给以后后端下发/排障用）。
+     */
     private fun isSrtTransportSelected(): Boolean {
         val ctx = appContext ?: context
-        return ctx.getSharedPreferences("token_prefs", Context.MODE_PRIVATE)
-            .getString("publish_transport", "webrtc").equals("srt", ignoreCase = true)
+        return !ctx.getSharedPreferences("token_prefs", Context.MODE_PRIVATE)
+            .getBoolean("force_webrtc", false)
     }
 
     /**
@@ -1088,7 +1091,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         currentConnMode = ConnMode.SRT
         effectiveConnectstype = 2
         H265Support.forceH264ForNonP2P()   // SRT→RTMP→RTC 桥接固定 H264
-        SessionPolicy.setManualReason("SRT测试链路(登录页选择)")
+        SessionPolicy.setManualReason("SRT链路(默认)")
         srtPendingStreamKey = streamKey
         srtLastStateText = ""
         lastSrtTickMs = 0L
