@@ -77,6 +77,8 @@ fun LoginScreen(
     var selectedCameraMode by remember { mutableStateOf("builtin") }
     // ⭐ §129 推流方式："webrtc"=原 WebRTC 推 SRS（默认）/ "srt"=SRT 推 SRS（测试，silu 编码参数）
     var selectedPublishTransport by remember { mutableStateOf("webrtc") }
+    // ⭐ §130 登录前权限引导弹框
+    var showPermissionGuide by remember { mutableStateOf(false) }
     // OTG 下载弹框
     var showOtgDownloadDialog by remember { mutableStateOf(false) }
     // ⭐ 强制更新：非空 = 后台配置的最低版本高于本地 → 弹不可关闭弹窗（AppUpdateManager 公共接口）
@@ -394,13 +396,8 @@ fun LoginScreen(
             }
             
             // 登录按钮
-            Button(
-                onClick = {
-                    if (username.isBlank() || password.isBlank()) {
-                        errorMessage = "请输入账号和密码"
-                        return@Button
-                    }
-                    
+            // ⭐ §130 真正执行登录（登录按钮先过权限检查，通过/用户选择继续后才调这里）
+            val performLogin: () -> Unit = {
                     isLoading = true
                     errorMessage = null
                     
@@ -589,6 +586,20 @@ fun LoginScreen(
                             errorDialog = e.message ?: "网络错误"
                         }
                     }
+            }
+
+            Button(
+                onClick = {
+                    if (username.isBlank() || password.isBlank()) {
+                        errorMessage = "请输入账号和密码"
+                        return@Button
+                    }
+                    // ⭐ §130 登录前查推流要用的权限：没开就先弹引导（必需项开齐才放行，建议项可跳过）
+                    if (LoginPermissionCheck.shouldShowGuide(context)) {
+                        showPermissionGuide = true
+                        return@Button
+                    }
+                    performLogin()
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -614,6 +625,17 @@ fun LoginScreen(
                 }
             }
             
+            // ⭐ §130 登录前权限引导
+            if (showPermissionGuide) {
+                PermissionGuideDialog(
+                    onContinue = {
+                        showPermissionGuide = false
+                        performLogin()
+                    },
+                    onDismiss = { showPermissionGuide = false }
+                )
+            }
+
             Spacer(modifier = Modifier.height(20.dp))
             
             // 注册入口
