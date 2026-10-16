@@ -60,6 +60,11 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
 
         // ⭐ 连接方式（0=SRS, 1=P2P），WebSocketManager 心跳读取上报，PC 跟随切换（与 iOS 一致）
         @Volatile var effectiveConnectstype: Int = 0
+
+        /** §131/§132 本版默认 SRT；token_prefs.force_webrtc=true 才回原 WebRTC（无界面回退开关） */
+        fun isSrtTransport(context: Context): Boolean =
+            !context.getSharedPreferences("token_prefs", Context.MODE_PRIVATE)
+                .getBoolean("force_webrtc", false)
     }
 
     // ⭐ 连接模式（静态：登录时 connect_mode 决定，推流期间不自动切换，与 iOS decideMode 一致）
@@ -1076,11 +1081,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
      * §131 推流方式默认 SRT（登录页不显示选项）。
      * 回退通道：token_prefs.force_webrtc=true 才走原 WebRTC（无界面，留给以后后端下发/排障用）。
      */
-    private fun isSrtTransportSelected(): Boolean {
-        val ctx = appContext ?: context
-        return !ctx.getSharedPreferences("token_prefs", Context.MODE_PRIVATE)
-            .getBoolean("force_webrtc", false)
-    }
+    private fun isSrtTransportSelected(): Boolean = srtTransport
 
     /**
      * SRT 推流：复用现有采集/预览/相机控制，给 localVideoTrack 挂 [SrtPublisher]（纹理→自建 MediaCodec→TS→SRT）。
@@ -1218,13 +1219,20 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         pub.applyBitrate()
     }
 
+    /** §132 电池温度（℃，系统粘性广播，读不到 null） */
+    private fun batteryTempC(): Float? = try {
+        val i = context.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+        val t = i?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE) ?: Int.MIN_VALUE
+        if (t == Int.MIN_VALUE) null else t / 10f
+    } catch (_: Exception) { null }
+
     /** startStats 循环里每 200ms 调一次，内部每秒取一次 SRT 统计写入上报字段 */
     private suspend fun srtStatsTick() {
         val pub = srtPublisher ?: return
         val now = System.currentTimeMillis()
         if (now - lastSrtTickMs < 1000) return
         lastSrtTickMs = now
-        val s = pub.tick()
+        val s = pub.tick(batteryTempC())
         WebSocketManager.publishingKbps = s.kbps
         WebSocketManager.publishingFps = s.fps
         WebSocketManager.publishingSendFps = s.fps
@@ -2256,9 +2264,16 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
      *  推流常态温度就是 FAIR，热控若压采集，「采集60」永远保不住） */
     private fun captureFps(): Int {
         val ladderFps = (currentLadder[currentProfile]?.fps ?: currentFps).coerceAtLeast(1)
-        if (!antiFlickerEnabled || usingOtgCamera) return ladderFps
-        return flickerSafeFps(minOf(currentFps, deviceMaxCaptureFps()))
+        if (usingOtgCamera) return ladderFps
+        if (antiFlickerEnabled) return flickerSafeFps(minOf(currentFps, deviceMaxCaptureFps()))
+        // ⭐ §132 SRT 版发热对齐 3840(test-android/silu)：摄像头 AE 固定帧率 = 推送帧率，
+        //   不再「采集60·推30」（摄像头/ISP/预览 GL 白跑一倍）。WebRTC 回退模式保持原解耦。
+        if (srtTransport) return minOf(currentFps, deviceMaxCaptureFps(), ladderFps).coerceAtLeast(1)
+        return ladderFps
     }
+
+    /** §132 本机推流方式是否 SRT（启动时读一次；force_webrtc 回退开关只在重启 App 后生效） */
+    private val srtTransport: Boolean by lazy { isSrtTransport(context) }
 
     // MARK: - §126 防频闪（对齐 iOS onAntiFlickerCommand + lockFrameRate）
     // 50Hz 市电灯光按 100Hz 闪：采集帧率是 100 的整数约数时，每帧都在灯光同一相位开始曝光，
@@ -3214,6 +3229,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             p2pManager.applyFramerateToAllSessions()
         } else if (currentConnMode == ConnMode.SRT) {
             applySrtEncoding()
+            ensureCaptureFps("cmd=set_fps")   // §132 SRT：采集帧率跟推送帧率走
         } else videoSender?.let { sender ->
             val params = sender.parameters
             if (params.encodings.isNotEmpty()) {

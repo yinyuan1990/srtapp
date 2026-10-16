@@ -43,8 +43,12 @@ class KeepAliveManager(context: Context) {
     private var writerThread: Thread? = null
 
     /** 启动保活：前台服务(camera) + 无声音频 + WakeLock。重复调用安全（幂等）。 */
+    /**
+     * @param silentAudio §132 SRT 版对齐 3840(test-android/silu)：只用前台服务(camera)+PARTIAL_WAKE_LOCK，
+     *   不再常驻静音 AudioTrack（多一路音频输出常开也是发热/耗电源）。WebRTC 回退模式仍为 true。
+     */
     @Synchronized
-    fun start() {
+    fun start(silentAudio: Boolean = true) {
         if (running) {
             Log.d(TAG, "⏭️ 保活已在运行，跳过")
             return
@@ -55,8 +59,9 @@ class KeepAliveManager(context: Context) {
         //    必须挂 camera 类型前台服务系统才允许后台继续采集。
         com.fz.yqlandroid.service.StreamingForegroundService.start(appContext)
         acquireWakeLock()
-        startSilentAudio()
-        Log.d(TAG, "🔊 后台保活已启动（前台服务 + 无声音频 + WakeLock）")
+        if (silentAudio) startSilentAudio()
+        Log.d(TAG, "🔊 后台保活已启动（前台服务 + WakeLock${if (silentAudio) " + 无声音频" else "，无静音音频(§132 SRT)"}）")
+        Log.d("meidui", "🔋 [保活] 前台服务+WakeLock 已启动，静音音频=${if (silentAudio) "开" else "关(§132 对齐3840)"}")
     }
 
     /** 停止保活：释放前台服务、音频与 WakeLock。重复调用安全（幂等）。 */

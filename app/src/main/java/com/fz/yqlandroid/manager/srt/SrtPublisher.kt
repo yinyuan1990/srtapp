@@ -278,7 +278,8 @@ class SrtPublisher(
 
     // ---------------- 每秒统计 + 防碎自适应（统计线程调用） ----------------
 
-    fun tick(): Snapshot {
+    /** @param batteryC 电池温度（℃，读不到为 null），§132 写进统计行便于与 WebRTC 版/3840 版对比发热 */
+    fun tick(batteryC: Float? = null): Snapshot {
         val now = System.currentTimeMillis()
         val dt = if (lastTickMs > 0) (now - lastTickMs).coerceAtLeast(1) else 1000L
         lastTickMs = now
@@ -312,7 +313,8 @@ class SrtPublisher(
                 " | 编码 ${enc?.width ?: 0}x${enc?.height ?: 0} ${kbps}kbps/目标${tgt}k ${fps}fps QP${enc?.statQp ?: -1}" +
                 " 帧=${enc?.statFrames ?: "-"} 关键帧累计${enc?.keyFrames ?: 0}" +
                 " | SRT ${sender.statsLine()} 本秒丢+$lossD 重传+$retransD 迟到丢+$dropD 断线丢帧${sender.droppedFrames} 重连${sender.reconnects}" +
-                " | 码率档${(scaleLadder[scaleIdx] * 100).toInt()}% 清晰度${qualityPct}%")
+                " | 码率档${(scaleLadder[scaleIdx] * 100).toInt()}% 清晰度${qualityPct}%" +
+                " | 电池${batteryC?.let { "%.1f℃".format(it) } ?: "?"}")
         if (enc == null && running && now - lastRebuildMs > 3000 && sinkD == 0L) {
             SrtLog.w("没有画面送进来（采集帧=0）：查摄像头/预览是否在跑")
         }

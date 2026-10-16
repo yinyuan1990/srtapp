@@ -18,7 +18,8 @@ internal class SrtFrameGate {
         if (lastNs != Long.MIN_VALUE && nowNs > lastNs && f == targetFps) {
             available = minOf(MAX_BURST, available + (nowNs - lastNs) * f / 1e9)
             lastNs = nowNs
-            if (available + 1e-6 < 1.0) {
+            // 容差 0.15：§132 采集帧率=推送帧率时，相机帧间隔的抖动不应被误判为「多出来的帧」而丢掉
+            if (available + 0.15 < 1.0) {
                 dropped++
                 return false
             }

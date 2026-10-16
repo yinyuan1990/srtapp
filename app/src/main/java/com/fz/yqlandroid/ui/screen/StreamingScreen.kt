@@ -82,10 +82,19 @@ fun StreamingScreen(
     // 🔊 后台保活（对标 iOS BackgroundAudioManager）：无声音频 + WakeLock，防止息屏后推流被冻结
     val keepAliveManager = remember { com.fz.yqlandroid.manager.KeepAliveManager(context) }
 
+    // ⭐ §132 SRT 版（本版默认）发热对齐 3840(test-android/silu)：不强制常亮、无静音音频保活，
+    //   锁屏/熄屏照推（前台服务 camera + WakeLock）。force_webrtc 回退时维持原行为。
+    val srtMode = remember { WebRTCManager.isSrtTransport(context) }
+
     // 🖥️ 前台常亮（对标 iOS isIdleTimerDisabled）：进入推流页时禁止自动息屏，离开时恢复
+    //   §132：SRT 模式不加（屏幕按系统设置自动熄灭，熄屏后预览不再绘制，推流继续）
     DisposableEffect(Unit) {
         val activity = context as? android.app.Activity
-        activity?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (!srtMode) {
+            activity?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            Log.d("meidui", "🔋 [§132] SRT 模式不强制常亮（对齐3840版：可锁屏推流）")
+        }
         onDispose {
             activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             keepAliveManager.stop()
@@ -231,7 +240,7 @@ fun StreamingScreen(
                 }
                 "gongzuo" -> {
                     isStreaming = true
-                    keepAliveManager.start()  // 🔊 唤醒工作：恢复保活
+                    keepAliveManager.start(silentAudio = !srtMode)  // 🔊 唤醒工作：恢复保活
                 }
                 "TryDisconnect" -> {
                     val needDisconnect = messageDict["needDisconnect"] as? Boolean ?: false
@@ -403,7 +412,7 @@ fun StreamingScreen(
             if (!isStreaming) {
                 println("jfh [Streaming] 🚀 开始自动推流: IP=$streamPushIp, key=$permanentToken")
                 webRTCManager.startPublish(streamPushIp, "tenantA", permanentToken)  // 🔥 app与iOS一致
-                keepAliveManager.start()  // 🔊 推流即启动后台保活，防止息屏后被冻结
+                keepAliveManager.start(silentAudio = !srtMode)  // 🔊 推流即启动后台保活，防止息屏后被冻结
                 isStreaming = true
             } else {
                 println("jfh [Streaming] ⏭️ 已在推流中，跳过")
