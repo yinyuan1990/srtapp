@@ -47,7 +47,8 @@ object Camera2ParamApplier {
         val whiteBalanceSlider: Int? = null, // 0..100 手动色温(0冷100暖)
         val whiteBalanceLocked: Boolean = false, // 锁定当前白平衡
         val targetFps: Int? = null,        // 🔥 钉死 AE 帧率区间 [fps,fps]，防低光自动砍半(30→15)
-        val antiBanding50Hz: Boolean = false // §126 防频闪：自动曝光下 AE 防闪按 50Hz（曝光取 10ms 整数倍）；手动快门下规范上不生效
+        val antiBanding50Hz: Boolean = false, // §126 防频闪：自动曝光下 AE 防闪按 50Hz（曝光取 10ms 整数倍）；手动快门下规范上不生效
+        val disableStabilization: Boolean = false // §129 SRT 模式：关电子防抖(EIS)+光学防抖(OIS)，同 silu
     )
 
     // ⭐ [meidui 诊断] 相机硬件层真实状态：每 ~150 帧打一行（30fps 下约 5s 一次）。
@@ -105,6 +106,7 @@ object Camera2ParamApplier {
             applyFocus(builder, characteristics, p)
             applyZoom(builder, characteristics, p)
             applyWhiteBalance(builder, characteristics, p)
+            if (p.disableStabilization) applyStabilizationOff(builder, characteristics)
 
             // 3) 一次性下发（不常驻循环）。
             //    ⭐ [meidui 诊断] 挂 CaptureCallback 打印硬件真实曝光/帧间隔/AE区间：
@@ -115,6 +117,23 @@ object Camera2ParamApplier {
         } catch (e: Throwable) {
             Log.w(TAG, "⚠️ 反射注入失败(已忽略，不影响推流): ${e.message}")
             false
+        }
+    }
+
+    // ===== §129 防抖关闭（SRT 模式） =====
+    private var stabilizationLogged = false
+    private fun applyStabilizationOff(b: CaptureRequest.Builder, c: CameraCharacteristics) {
+        try {
+            b.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
+            val ois = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)
+            val oisOff = ois?.contains(CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_OFF) == true
+            if (oisOff) b.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_OFF)
+            if (!stabilizationLogged) {
+                stabilizationLogged = true
+                Log.d("meidui", "📡 [SRT] 防抖已关：EIS=OFF OIS=${if (oisOff) "OFF" else "不可关/无(可用=${ois?.joinToString()})"}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "stabilization 写入失败: ${e.message}")
         }
     }
 

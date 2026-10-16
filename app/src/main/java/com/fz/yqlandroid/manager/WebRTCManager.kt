@@ -63,9 +63,17 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
     }
 
     // ⭐ 连接模式（静态：登录时 connect_mode 决定，推流期间不自动切换，与 iOS decideMode 一致）
-    enum class ConnMode { SRS, P2P }
+    // ⭐ §129 SRT：登录页「推流方式=SRT(测试)」时走 SRT→SRS（不建 PeerConnection，connectstype=2）
+    enum class ConnMode { SRS, P2P, SRT }
     @Volatile var currentConnMode: ConnMode = ConnMode.SRS
         private set
+
+    // ⭐ §129 SRT 推流器（挂在 localVideoTrack 上的 VideoSink；SRT 模式推流期间非空）
+    @Volatile private var srtPublisher: com.fz.yqlandroid.manager.srt.SrtPublisher? = null
+    // ⭐ §129 SRT 重连换新流名：连接线程生成候选流名，首个关键帧发出后才生效上报（PC 据新流名重拉）
+    @Volatile private var srtPendingStreamKey: String = ""
+    @Volatile private var srtLastStateText: String = ""
+    private var lastSrtTickMs = 0L
 
     // ⭐ P2P 多会话管理（connect_mode == "p2p" 时启用，与 SRS 互斥）
     val p2pManager = P2PManager(context)
@@ -800,6 +808,11 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             localRenderer?.let { renderer ->
                 localVideoTrack?.addSink(renderer)
             }
+            // ⭐ §129 SRT 推流中重建了采集（相机自愈/回前台恢复走 startPreview）→ 新视频轨重新挂 SRT 推流器
+            srtPublisher?.let { pub ->
+                localVideoTrack?.addSink(pub)
+                Log.d("meidui", "📡 [SRT] 预览重建 → 推流器已重新挂到新视频轨")
+            }
             
             isPreviewRunning = true
             Log.d(TAG, "✅ 预览已启动: 采集${currentWidth}x${currentHeight}@${appliedCaptureFps}fps · 推送目标${currentFps}fps (${profileName(currentProfile)})")
@@ -817,6 +830,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         // ⭐ 第四十八章b：OTG 日志上报随采集会话结束（stop 内部先冲刷剩余批次）
         if (usingOtgCamera) OtgLogReporter.stop()
         try { localVideoTrack?.removeSink(localRenderer!!) } catch (_: Exception) {}
+        srtPublisher?.let { pub -> try { localVideoTrack?.removeSink(pub) } catch (_: Exception) {} }
         try { videoCapturer?.stopCapture() } catch (_: Exception) {}
         try { videoCapturer?.dispose() } catch (_: Exception) {}
         videoCapturer = null
@@ -878,6 +892,12 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         P2PLogReporter.start(streamKey)
         
         bitrateScaleIdx = 0   // 新推流会话：码率阶梯回满档（自适应从头开始）
+
+        // ⭐ §129 SRT 测试模式（登录页选择）：不走 SessionPolicy/PeerConnection，直接 SRT 推到同一台 SRS
+        if (isSrtTransportSelected()) {
+            startSrtPublish()   // 异步：publishStarting 由其 finally 清零
+            return
+        }
 
         // ⭐ §53.4.1 宽限期：推流那一刻若还没收到任何 PC_PRESENCE（两端登录有先后，刚开机时
         //   消息可能还在路上），等 2s 再决策一次——否则"其实同 WiFi"却因消息未到白走 SRS。
@@ -1050,6 +1070,180 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         }
     }
     
+    // MARK: - ⭐ §129 SRT 推流（测试模式，登录页「推流方式=SRT」）
+
+    /** 登录页选的推流方式（token_prefs.publish_transport，登录时写入；默认 webrtc） */
+    private fun isSrtTransportSelected(): Boolean {
+        val ctx = appContext ?: context
+        return ctx.getSharedPreferences("token_prefs", Context.MODE_PRIVATE)
+            .getString("publish_transport", "webrtc").equals("srt", ignoreCase = true)
+    }
+
+    /**
+     * SRT 推流：复用现有采集/预览/相机控制，给 localVideoTrack 挂 [SrtPublisher]（纹理→自建 MediaCodec→TS→SRT）。
+     * 推到登录下发的同一台 SRS（10080/udp），SRS srt_to_rtmp + rtmp_to_rtc 桥接成 WebRTC；
+     * 上报 connectstype=2，PC 走 playWebRTC()（WHEP），PC/后端零改动。
+     */
+    private fun startSrtPublish() {
+        currentConnMode = ConnMode.SRT
+        effectiveConnectstype = 2
+        H265Support.forceH264ForNonP2P()   // SRT→RTMP→RTC 桥接固定 H264
+        SessionPolicy.setManualReason("SRT测试链路(登录页选择)")
+        srtPendingStreamKey = streamKey
+        srtLastStateText = ""
+        lastSrtTickMs = 0L
+        val prefs = (appContext ?: context).getSharedPreferences("token_prefs", Context.MODE_PRIVATE)
+        // 可选覆盖项（无界面，后续可由后端下发写入；缺省=silu 参数 + 延迟 500ms）
+        val cfg = com.fz.yqlandroid.manager.srt.SrtPublisher.Config(
+            host = srsIP,
+            port = prefs.getInt("srt_port", 10080),
+            latencyMs = prefs.getInt("srt_latency_ms", 500).coerceIn(50, 3000),
+            qpMax = prefs.getInt("srt_qp_max", 30).coerceIn(0, 51),
+            bitrateMode = if (prefs.getInt("srt_bitrate_mode", 1) == 2) 2 else 1,
+            keyIntervalSec = prefs.getInt("srt_gop_sec", 1).coerceIn(1, 10),
+            fixedKbps = prefs.getInt("srt_fixed_kbps", 0).coerceIn(0, 50000),
+        )
+        Log.d("meidui", "📡 [SRT] ═══ 开始 SRT 推流 srt://${cfg.host}:${cfg.port} app=$app 流=$streamKey" +
+                " 档位=${profileName(currentProfile)} 采集${currentWidth}x${currentHeight}@${captureFps()} 推送${currentFps}fps" +
+                " 清晰度${_currentQualityPercent}% ═══")
+        onConnectionStateChanged?.invoke("SRT连接中...")
+
+        scope.launch {
+            try {
+                if (!isPreviewRunning) {
+                    withContext(Dispatchers.Main) { startPreview() }
+                }
+                val egl = eglBase ?: run {
+                    Log.d("meidui", "⚠️ [SRT] eglBase 为空，无法启动 SRT 推流")
+                    withContext(Dispatchers.Main) { onConnectionStateChanged?.invoke("推流失败: EGL未初始化") }
+                    return@launch
+                }
+                withContext(Dispatchers.Main) {
+                    val pub = com.fz.yqlandroid.manager.srt.SrtPublisher(
+                        sharedContext = egl.eglBaseContext,
+                        cfg = cfg,
+                        streamIdProvider = { attempt -> buildSrtStreamId(attempt) },
+                        onLive = { attempt -> onSrtLive(attempt) },
+                    )
+                    srtPublisher = pub
+                    applySrtEncoding()
+                    pub.start()
+                    val track = localVideoTrack
+                    if (track != null) track.addSink(pub)
+                    else Log.d("meidui", "⚠️ [SRT] localVideoTrack 为空，等预览重建后自动挂上")
+                    isPublishing = true
+                    // publishStatus 等首个关键帧真正发出（onSrtLive）再置 1，PC 才不会去拉一条还不存在的流
+                    WebSocketManager.isPublishingFlag = 0
+                    WebSocketManager.publishingStreamKey = streamKey
+                    // SRT 模式关 OIS/EIS（silu 同款，防抖裁切+形变会让运动画面更糊）
+                    applyCameraParamsWithRetry("SRT关防抖", attempts = 8, initialDelayMs = 300)
+                    startStats()
+                }
+            } catch (e: Exception) {
+                Log.d("meidui", "⚠️ [SRT] 启动异常: ${e.message}")
+                withContext(Dispatchers.Main) { onConnectionStateChanged?.invoke("推流失败: ${e.message}") }
+            } finally {
+                publishStarting = false
+            }
+        }
+    }
+
+    /**
+     * 连接线程调用：生成 SRS streamid `#!::r=<app>/<流名>?token=..&username=..,m=publish`。
+     * - 推流 token 一次性（后端 validatePublishToken 用后即焚），每次连接都要重新取；
+     * - username 必带：后端 §112「试用用完拒推」按它判断；
+     * - 重连（attempt>0）换新流名（基础流名_时间戳，与 WebRTC 重推一致），首个关键帧发出后才上报，
+     *   PC 见流名变化即重拉（§53.8），不会卡在一条已断的旧流上。
+     */
+    private fun buildSrtStreamId(attempt: Int): String {
+        val key = if (attempt == 0) streamKey else "${baseStreamKey}_${System.currentTimeMillis() / 1000}"
+        srtPendingStreamKey = key
+        val prefs = (appContext ?: context).getSharedPreferences("token_prefs", Context.MODE_PRIVATE)
+        val username = (prefs.getString("username", "") ?: "").replace(",", "")
+        val jwt = prefs.getString("jwt_token", "") ?: ""
+        var token = ""
+        if (jwt.isNotEmpty()) {
+            token = try {
+                kotlinx.coroutines.runBlocking {
+                    com.fz.yqlandroid.network.NetworkService.getStreamToken(jwt, key, username)
+                }.getOrNull()?.token ?: ""
+            } catch (e: Exception) {
+                Log.d("meidui", "⚠️ [SRT] 获取推流Token异常: ${e.message}（按无Token推流）")
+                ""
+            }
+        }
+        val query = when {
+            token.isNotEmpty() -> "?token=$token&username=$username"
+            username.isNotEmpty() -> "?username=$username"
+            else -> ""
+        }
+        Log.d("meidui", "📡 [SRT] 第${attempt + 1}次连接 流名=$key token=${if (token.isNotEmpty()) "已取到" else "无"}")
+        return "#!::r=$app/$key$query,m=publish"
+    }
+
+    /** 某次 SRT 连接的首个关键帧已发出（编码线程）→ 流已在 SRS 上，生效流名并上报 publishStatus=1 */
+    private fun onSrtLive(attempt: Int) {
+        val key = srtPendingStreamKey
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            if (currentConnMode != ConnMode.SRT || srtPublisher == null) return@post
+            if (key.isNotEmpty() && key != streamKey) {
+                Log.d("meidui", "📡 [SRT] 重连成功，流名 $streamKey → $key（PC 将按新流名重拉）")
+                streamKey = key
+            }
+            WebSocketManager.publishingStreamKey = streamKey
+            WebSocketManager.isPublishingFlag = 1
+            onConnectionStateChanged?.invoke("SRT推流中")
+            srtLastStateText = "SRT推流中"
+            Log.d("meidui", "📡 [SRT] ✅ 出流（第${attempt + 1}次连接）流名=$streamKey → 已上报 publishStatus=1")
+        }
+    }
+
+    private fun stopSrtPublish() {
+        val pub = srtPublisher ?: return
+        srtPublisher = null
+        try { localVideoTrack?.removeSink(pub) } catch (_: Exception) {}
+        pub.stop()
+    }
+
+    /** 推送帧率 / 清晰度 / 档位缩放 → SRT 推流器（码率按编码分辨率自动 × 清晰度 × 防碎档） */
+    private fun applySrtEncoding() {
+        val pub = srtPublisher ?: return
+        pub.pushFps = minOf(currentFps, pushFpsHardCap(), thermalFpsCap).coerceAtLeast(1)
+        pub.qualityPct = _currentQualityPercent
+        val preset = currentLadder[currentProfile]
+        pub.scaleDown = if (!usingOtgCamera && preset != null && preset.scaleDown > 1.0) preset.scaleDown else 1.0
+        pub.applyBitrate()
+    }
+
+    /** startStats 循环里每 200ms 调一次，内部每秒取一次 SRT 统计写入上报字段 */
+    private suspend fun srtStatsTick() {
+        val pub = srtPublisher ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastSrtTickMs < 1000) return
+        lastSrtTickMs = now
+        val s = pub.tick()
+        WebSocketManager.publishingKbps = s.kbps
+        WebSocketManager.publishingFps = s.fps
+        WebSocketManager.publishingSendFps = s.fps
+        WebSocketManager.packetLoss = s.lossRate
+        WebSocketManager.rtt = s.rttMs
+        WebSocketManager.networkQuality = when {
+            !s.connected -> "poor"
+            s.lossRate <= 0.01 && s.rttMs in 1..100 -> "excellent"
+            s.lossRate <= 0.03 && s.rttMs in 1..200 -> "good"
+            s.lossRate <= 0.05 && s.rttMs in 1..400 -> "fair"
+            else -> "poor"
+        }
+        val text = if (s.live) "SRT推流中" else if (s.connected) "SRT已连接,等关键帧" else "SRT连接中..."
+        withContext(Dispatchers.Main) {
+            onStatsUpdate?.invoke(s.kbps, s.fps, s.rttMs)
+            if (text != srtLastStateText) {
+                srtLastStateText = text
+                onConnectionStateChanged?.invoke(text)
+            }
+        }
+    }
+
     fun stopPublish() {
         Log.d(TAG, "🔴 停止推流...")
         
@@ -1064,8 +1258,25 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         // 📶 §21.27 网络切换监听随推流生命周期（统一入口在 WebRTCManager）
         stopNetworkMonitoring()
         
+        // ⭐ §129 SRT：先停推流器再停日志上报，停流日志（断线/重连累计）才能进上报
+        if (currentConnMode == ConnMode.SRT) stopSrtPublish()
+
         // ⭐ P2P诊断日志上报：停流即冲刷剩余并停止采集
         P2PLogReporter.stop()
+
+        // ⭐ §129 SRT 模式：关推流器即可（SRT 断开 = SRS 自动 unpublish，无需 deleteStream）
+        if (currentConnMode == ConnMode.SRT) {
+            stopSrtPublish()
+            isPublishing = false
+            WebSocketManager.isPublishingFlag = 0
+            WebSocketManager.publishingStreamKey = ""
+            WebSocketManager.publishingKbps = 0
+            WebSocketManager.publishingFps = 0
+            WebSocketManager.publishingSendFps = 0
+            onConnectionStateChanged?.invoke("未连接")
+            Log.d("meidui", "📡 [SRT] 推流已停止")
+            return
+        }
         
         // ⭐ P2P 模式：关掉所有直连会话即可（无 SRS 流可删）
         if (currentConnMode == ConnMode.P2P) {
@@ -1354,6 +1565,11 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
     // MARK: - 编码参数
     
     private fun setEncodingParameters() {
+        // ⭐ §129 SRT：编码参数落到 SRT 推流器（自建 MediaCodec）
+        if (currentConnMode == ConnMode.SRT) {
+            applySrtEncoding()
+            return
+        }
         // ⭐ P2P：编码参数落到所有直连会话（码率与帧率解耦写入）
         if (currentConnMode == ConnMode.P2P) {
             p2pManager.applyBitrateToAllSessions()
@@ -1391,6 +1607,11 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
     fun setMaxBitrateKbps(kbps: Int) {
         currentBitrateKbps = kbps
         currentMinBitrateKbps = kbps  // ⭐ 码率稳定：min=max 钉死，弱网退让走自适应阶梯（先降帧后降码率）
+        // ⭐ §129 SRT：码率按编码分辨率自动 × 清晰度百分比（不用 WebRTC 档位码率），交给推流器重算
+        if (currentConnMode == ConnMode.SRT) {
+            applySrtEncoding()
+            return
+        }
         // ⭐ P2P：只写码率、不碰帧率（解耦，避免「调码率改了 fps」——iOS §21.5 的坑）
         if (currentConnMode == ConnMode.P2P) {
             p2pManager.applyBitrateToAllSessions()
@@ -1426,6 +1647,11 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
      *   false=观看端请求，与 PLI 合并限频。
      */
     fun forceKeyframe(bypassGate: Boolean = true) {
+        // ⭐ §129 SRT：直接要编码器出 IDR（WS request_keyframe 已在调用处 1s 节流；平时靠 1s 固定 GOP）
+        if (currentConnMode == ConnMode.SRT) {
+            srtPublisher?.requestKeyFrame()
+            return
+        }
         if (bypassGate) EncoderFrameGate.allowForcedKeyframe()
         // ⭐ P2P：videoSender 恒为 null，必须落到各直连会话（iOS 曾因此断链半年，§21.5 教训）
         if (currentConnMode == ConnMode.P2P) {
@@ -1710,6 +1936,11 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
                             onPcOnlineUpdate?.invoke(onlinePcs)
                         }
                     }
+                }
+                // ⭐ §129 SRT：没有 PeerConnection，统计/上报/防碎自适应全部来自 SRT 推流器
+                if (currentConnMode == ConnMode.SRT) {
+                    srtStatsTick()
+                    continue
                 }
                 // ⭐ 统计源按模式选取：SRS 用 peerConnection；P2P 用已连接的观看会话（取一路代表本机发送）。
                 //   iOS 曾因 P2P 模式下统计源为 null 导致 kbps/网络质量/自适应全部空转（§21.5 教训）。
@@ -2274,6 +2505,11 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
                     }
                     return@withContext
                 }
+                if (currentConnMode == ConnMode.SRT) {
+                    // §129：SRT 发送器自带 2s 断线重连（重连换新流名），这里不重推
+                    Log.d("meidui", "📡 [SRT] [$source] 健康检查：SRT 自动重连中/正常，无需重推")
+                    return@withContext
+                }
                 if (currentConnMode == ConnMode.P2P) {
                     // ⭐ 需求#9（2026-07-31）：WS 闪断重连时用**选择性恢复**——ICE 活着的会话
                     //   （局域网直连不经服务器）保画面不拆，死的才拆重连；
@@ -2734,7 +2970,9 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             // 🔥 钉死 AE 帧率区间，防低光时相机自动 30→15（iOS 无此坑，Android Camera2 经典问题）
             // ⭐ 用采集帧率（档位60）而非推送目标：否则推送30时 AE 被钉 [30,30]，采集被硬拉回30，解耦失效
             targetFps = captureFps(),
-            antiBanding50Hz = antiFlickerEnabled
+            antiBanding50Hz = antiFlickerEnabled,
+            // §129 SRT 模式关 OIS/EIS（silu 同款）；WebRTC 模式不变
+            disableStabilization = srtPublisher != null
         )
         return Camera2ParamApplier.apply(videoCapturer as? CameraVideoCapturer, params)
     }
@@ -2912,6 +3150,8 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         if (currentConnMode == ConnMode.P2P) {
             // ⭐ P2P：帧率落到所有直连会话（p2pTargetFps 读的就是刚更新的 currentFps）
             p2pManager.applyFramerateToAllSessions()
+        } else if (currentConnMode == ConnMode.SRT) {
+            applySrtEncoding()   // §129：推送帧率=SRT 推流器入口令牌桶
         } else {
             val sender = videoSender
             if (sender != null) {
@@ -2969,6 +3209,8 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         currentFps = minOf(targetFps, pushFpsHardCap(), thermalFpsCap)
         if (currentConnMode == ConnMode.P2P) {
             p2pManager.applyFramerateToAllSessions()
+        } else if (currentConnMode == ConnMode.SRT) {
+            applySrtEncoding()
         } else videoSender?.let { sender ->
             val params = sender.parameters
             if (params.encodings.isNotEmpty()) {
@@ -2990,8 +3232,8 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         val maxKbps = currentLadder[currentProfile]?.maxKbps ?: 2000
         val targetKbps = (maxKbps * pct / 100).coerceAtLeast(200)
         
+        _currentQualityPercent = pct   // 先记百分比：§129 SRT 在 setMaxBitrateKbps 里按它重算码率
         setMaxBitrateKbps(targetKbps)
-        _currentQualityPercent = pct
         Log.d(TAG, "🎨 码率: ${pct}% → ${targetKbps}kbps")
     }
     

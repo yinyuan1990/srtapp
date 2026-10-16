@@ -57,6 +57,8 @@ dependencies {
     
     // ========== WebRTC (Stream WebRTC Android) ==========
     implementation(libs.stream.webrtc)
+    // ========== §129 SRT 推流模式（libsrt 封装） ==========
+    implementation(libs.srtdroid.core)
     
     // ========== 网络请求 & WebSocket (OkHttp自带WebSocket支持) ==========
     implementation(libs.okhttp)

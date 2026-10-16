@@ -658,7 +658,8 @@ class WebSocketManager private constructor() {
         
         // ⭐ 连接方式由 WebRTCManager 实时决策（0=SRS, 1=P2P），PC 跟随 connectstype 切换（与 iOS 一致）
         val connectstype = WebRTCManager.effectiveConnectstype
-        val connectMode = if (connectstype == 1) "p2p" else "srs"
+        // §129：2=SRT（SRT→SRS 桥接，PC 照旧走 SRS/WHEP 拉流）
+        val connectMode = when (connectstype) { 1 -> "p2p"; 2 -> "srt"; else -> "srs" }
         
         val state = mutableMapOf<String, Any>(
             "networkType" to getNetworkType(),

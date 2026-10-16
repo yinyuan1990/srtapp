@@ -8,6 +8,8 @@ cameraCore = "1.5.3"
 # 换 webrtc-sdk(LiveKit) fork：与 iOS 同源同里程碑(iOS=144.7559.10)，其 H265 RTP 打包(RFC 7798)
 # 已被 iOS↔PC 链路验证互通。包名同为 org.webrtc，API 兼容。
 webrtcSdk = "144.7559.09"
+# §129 SRT 推流模式（同 test-android 已验证版本）
+srtdroid = "1.9.5"
 gson = "2.10.1"
 # ⭐ 2.2.10：AUSBC 3.5.3（第四十八章 OTG）用 Kotlin 2.2 编译（metadata 2.2.0），
 #   2.0.x 编译器读不了其 kotlin_module → "incompatible version of Kotlin" 编译失败；
@@ -36,6 +38,7 @@ androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = 
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycleViewmodelCompose" }
 androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigationCompose" }
 stream-webrtc = { module = "io.github.webrtc-sdk:android", version.ref = "webrtcSdk" }
+srtdroid-core = { module = "io.github.thibaultbee.srtdroid:srtdroid-core", version.ref = "srtdroid" }
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }

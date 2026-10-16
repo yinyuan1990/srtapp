@@ -71,6 +71,11 @@ object SessionPolicy {
     @Volatile var connectReason: String = ""
         private set
 
+    /** §129 SRT 模式不走决策逻辑，由 WebRTCManager 直接写原因（PC 顶栏显示） */
+    fun setManualReason(reason: String) {
+        connectReason = reason
+    }
+
     val currentDecision: Decision? get() = current
 
     // ---------- 喂输入 ----------
