@@ -2938,8 +2938,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
                 Log.d("meidui", "📡 [SRT设置] 快门=${if (_srtShutterNs > 0) "1/${1_000_000_000L / _srtShutterNs}s" else "自动"}" +
                         " ISO=${if (_srtIso > 0) _srtIso.toString() else "自动"} EV=$_srtExposureEv 注入=${if (ok) "成功" else "等待会话"}")
                 if (!ok) applyCameraParamsWithRetry("SRT曝光注入失败重试")
-                // 等新请求出几帧再回读实际曝光
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ reportSrtCamState() }, 500)
+                // 实际曝光回读交给 PC 每秒的 srt_cam_query（PC 拖动时每格立即下发，这里不再逐条回报，免得刷屏）
             }
 
             // §141 PC「SRT设置」打开期间每秒问一次 → 回 srtCamState
