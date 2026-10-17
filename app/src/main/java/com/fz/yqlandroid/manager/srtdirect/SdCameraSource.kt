@@ -112,7 +112,6 @@ internal class SdCameraSource(
     // —— §141 曝光（照 test-android CameraSource：快门/ISO 0=自动，只手动一项时另一项按测光折算）——
     private var lastAutoExposureNs = 0L
     private var lastAutoIso = 0
-    private var boostRangeLogged = false
     @Volatile var aeAuto = true
         private set
     @Volatile var exposureDesc: String = "自动"
@@ -325,26 +324,9 @@ internal class SdCameraSource(
         req.set(CaptureRequest.SENSOR_EXPOSURE_TIME, exp)
         req.set(CaptureRequest.SENSOR_SENSITIVITY, iso)
         req.set(CaptureRequest.SENSOR_FRAME_DURATION, frameNs)
-        // §143 快门调快后需要的 ISO 超过传感器上限（实测 HONOR FNE-AN00 上限 1594，自动曝光时已是
-        //   30ms+ISO1594 顶格）→ 用 ISP 数码增益 POST_RAW_SENSITIVITY_BOOST（100=1x）补差，亮度不再随快门掉；
-        //   代价是噪点变多。机型不支持（范围上限 ≤100）时只能变暗，日志里写明。
-        var boostDesc = ""
-        if (isoR != null && isoWant > isoR.upper && reqIso <= 0) {
-            val br = c.get(CameraCharacteristics.CONTROL_POST_RAW_SENSITIVITY_BOOST_RANGE)
-            if (!boostRangeLogged) {
-                boostRangeLogged = true
-                SdLog.i("§143 ISO 范围 ${isoR.lower}~${isoR.upper}，数码增益范围 ${br?.lower ?: "-"}~${br?.upper ?: "-"}（100=1x）")
-            }
-            if (br != null && br.upper > 100) {
-                val boost = (100L * isoWant / iso).toInt().coerceIn(maxOf(100, br.lower), br.upper)
-                req.set(CaptureRequest.CONTROL_POST_RAW_SENSITIVITY_BOOST, boost)
-                boostDesc = " 数码增益x${"%.1f".format(boost / 100f)}" +
-                        if (100L * isoWant / iso > br.upper) "（已到机型上限，仍偏暗）" else ""
-            } else {
-                boostDesc = " ISO已到顶，机型无数码增益（需要ISO≈$isoWant，会变暗）"
-            }
-        }
-        exposureDesc = "手动 快门 1/${1_000_000_000L / exp.coerceAtLeast(1)}s ISO $iso$boostDesc" +
+        // 与 test-android 一致：不加数码增益。需要的 ISO 超过传感器上限时只能变暗，状态里写明，便于对照。
+        val capDesc = if (isoR != null && isoWant > isoR.upper) "（ISO已到上限${isoR.upper}，需要≈$isoWant）" else ""
+        exposureDesc = "手动 快门 1/${1_000_000_000L / exp.coerceAtLeast(1)}s ISO $iso$capDesc" +
                 (if (reqShutterNs <= 0) "（快门按测光折算）" else "") +
                 (if (reqIso <= 0) "（ISO 按测光折算）" else "")
         SdLog.i("§141 曝光 $exposureDesc（帧间隔 ${frameNs / 1_000_000}ms）")
