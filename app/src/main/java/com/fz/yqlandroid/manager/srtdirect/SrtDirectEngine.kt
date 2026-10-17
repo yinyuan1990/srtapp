@@ -186,6 +186,34 @@ internal class SrtDirectEngine(private val context: Context, private val host: H
         encoder?.requestKeyFrame()
     }
 
+    /** §141 PC「SRT设置」回读（照 test-android StreamSession.remoteState）：能力范围 + 实际曝光 + 链路 */
+    fun cameraState(): Map<String, Any> {
+        val m = LinkedHashMap<String, Any>()
+        val r = req
+        val s = sender
+        m["width"] = encodeWidth
+        m["height"] = encodeHeight
+        m["fps"] = r?.fps ?: 0
+        m["kbps"] = r?.kbps ?: 0
+        m["latencyMs"] = s?.currentTarget?.latencyMs ?: (r?.plan?.latencyMs ?: 0)
+        if (s != null) {
+            m["rttMs"] = s.rttMs.toInt()
+            m["sndBufMs"] = s.sndBufMs
+            m["srtState"] = s.state.toString()
+        }
+        val cam = camera ?: return m
+        m["manualSupported"] = cam.manualSupported
+        cam.exposureRangeNs?.let { m["expMinNs"] = it.lower; m["expMaxNs"] = it.upper }
+        cam.isoRange?.let { m["isoMin"] = it.lower; m["isoMax"] = it.upper }
+        cam.evRange?.let { m["evMin"] = it.first; m["evMax"] = it.second }
+        cam.zoomRange?.let { m["zoomMin"] = it.first; m["zoomMax"] = it.second }
+        m["curExpNs"] = cam.curExposureNs
+        m["curIso"] = cam.curIso
+        m["aeAuto"] = cam.aeAuto
+        m["exposureDesc"] = cam.exposureDesc
+        return m
+    }
+
     /** 采集帧率 = 推送帧率（§132 对齐 3840）；防抖按 srtParams */
     private fun effectiveControls(): Camera2ParamApplier.Params {
         val r = req

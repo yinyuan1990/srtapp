@@ -48,7 +48,11 @@ object Camera2ParamApplier {
         val whiteBalanceLocked: Boolean = false, // 锁定当前白平衡
         val targetFps: Int? = null,        // 🔥 钉死 AE 帧率区间 [fps,fps]，防低光自动砍半(30→15)
         val antiBanding50Hz: Boolean = false, // §126 防频闪：自动曝光下 AE 防闪按 50Hz（曝光取 10ms 整数倍）；手动快门下规范上不生效
-        val disableStabilization: Boolean = false // §129 SRT 模式：关电子防抖(EIS)+光学防抖(OIS)，同 silu
+        val disableStabilization: Boolean = false, // §129 SRT 模式：关电子防抖(EIS)+光学防抖(OIS)，同 silu
+        // §141 SRT直推独立曝光（照 test-android CameraSource.applyExposure，只由 SdCameraSource 使用；
+        //   WebRTC 反射通道不读这两项）：0 = 自动；只手动一项时另一项按切换前测光折算（曝光×ISO 不变）。
+        val srtShutterNs: Long = 0L,
+        val srtIso: Int = 0
     )
 
     // ⭐ [meidui 诊断] 相机硬件层真实状态：每 ~150 帧打一行（30fps 下约 5s 一次）。

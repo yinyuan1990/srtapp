@@ -109,6 +109,41 @@ internal class SdCameraSource(
     @Volatile var curFrameDurNs = 0L
         private set
 
+    // —— §141 曝光（照 test-android CameraSource：快门/ISO 0=自动，只手动一项时另一项按测光折算）——
+    private var lastAutoExposureNs = 0L
+    private var lastAutoIso = 0
+    @Volatile var aeAuto = true
+        private set
+    @Volatile var exposureDesc: String = "自动"
+        private set
+
+    val manualSupported: Boolean
+        get() = chars?.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+            ?.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR) == true
+    val exposureRangeNs: android.util.Range<Long>?
+        get() = chars?.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+    val isoRange: android.util.Range<Int>?
+        get() = chars?.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
+    /** 自动曝光补偿可调范围（EV） */
+    val evRange: Pair<Float, Float>?
+        get() {
+            val c = chars ?: return null
+            val step = c.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP) ?: return null
+            val r = c.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE) ?: return null
+            if (step.toFloat() <= 0f || (r.lower == 0 && r.upper == 0)) return null
+            return r.lower * step.toFloat() to r.upper * step.toFloat()
+        }
+    /** 变焦倍率范围：Android 11+ 用 CONTROL_ZOOM_RATIO_RANGE（多摄可 <1x），否则 1x~最大数码变焦 */
+    val zoomRange: Pair<Float, Float>?
+        get() {
+            val c = chars ?: return null
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                c.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.let { return it.lower to it.upper }
+            }
+            val max = c.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: return null
+            return if (max > 1f) 1f to max else null
+        }
+
     private val captureCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(s: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
             val n = frameCount++
@@ -119,6 +154,11 @@ internal class SdCameraSource(
             curExposureNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: curExposureNs
             curIso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: curIso
             curFrameDurNs = result.get(CaptureResult.SENSOR_FRAME_DURATION) ?: curFrameDurNs
+            // §141 自动曝光期间记下测光结果：之后只手动一项时，另一项按它折算（test-android 同款）
+            if (aeAuto && curExposureNs > 0 && curIso > 0) {
+                lastAutoExposureNs = curExposureNs
+                lastAutoIso = curIso
+            }
             if (n % 150 == 0L) {
                 val durMs = curFrameDurNs / 1_000_000.0
                 SdLog.i("cam exp=${"%.1f".format(curExposureNs / 1_000_000.0)}ms frameDur=${"%.1f".format(durMs)}ms" +
@@ -245,10 +285,48 @@ internal class SdCameraSource(
             targets.forEach { req.addTarget(it) }
             req.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
             Camera2ParamApplier.applyToBuilder(req, c, params)
+            applySrtExposure(req, c, params)
             s.setRepeatingRequest(req.build(), captureCallback, handler)
         } catch (t: Throwable) {
             SdLog.w("下发采集参数失败: ${t.message}")
         }
+    }
+
+    /**
+     * §141 SRT直推曝光，逐行照 test-android `CameraSource.applyExposure`：
+     * 快门/ISO 任一手动 → AE 关闭，曝光时间 + ISO + 帧间隔全部手动给；另一项为自动时按切换前的
+     * 测光结果折算（曝光×ISO 不变，亮度不跳）。快门超过一帧时间钳到 1/fps，保证帧率不掉。
+     * 两项都自动 → 保持 [Camera2ParamApplier] 写好的自动曝光（含曝光补偿/50Hz 防闪）。
+     */
+    private fun applySrtExposure(req: CaptureRequest.Builder, c: CameraCharacteristics, p: Camera2ParamApplier.Params) {
+        val reqShutterNs = p.srtShutterNs
+        val reqIso = p.srtIso
+        if ((reqShutterNs <= 0 && reqIso <= 0) || !manualSupported) {
+            aeAuto = true
+            exposureDesc = if (reqShutterNs > 0 || reqIso > 0) "自动（该摄像头不支持手动曝光）" else "自动"
+            return
+        }
+        val fps = (p.targetFps ?: 30).coerceAtLeast(1)
+        val frameNs = 1_000_000_000L / fps
+        val expRange = c.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+        val isoR = c.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
+        val baseExp = if (lastAutoExposureNs > 0) lastAutoExposureNs else frameNs / 2
+        val baseIso = if (lastAutoIso > 0) lastAutoIso else 400
+        var exp = if (reqShutterNs > 0) reqShutterNs
+            else if (reqIso > 0) baseExp * baseIso / reqIso else baseExp
+        exp = exp.coerceAtMost(frameNs)
+        if (expRange != null) exp = exp.coerceIn(expRange.lower, minOf(expRange.upper, frameNs).coerceAtLeast(expRange.lower))
+        var iso = if (reqIso > 0) reqIso else (baseExp.toDouble() * baseIso / exp).toInt()
+        if (isoR != null) iso = iso.coerceIn(isoR.lower, isoR.upper)
+        aeAuto = false
+        req.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+        req.set(CaptureRequest.SENSOR_EXPOSURE_TIME, exp)
+        req.set(CaptureRequest.SENSOR_SENSITIVITY, iso)
+        req.set(CaptureRequest.SENSOR_FRAME_DURATION, frameNs)
+        exposureDesc = "手动 快门 1/${1_000_000_000L / exp.coerceAtLeast(1)}s ISO $iso" +
+                (if (reqShutterNs <= 0) "（快门按测光折算）" else "") +
+                (if (reqIso <= 0) "（ISO 按测光折算）" else "")
+        SdLog.i("§141 曝光 $exposureDesc（帧间隔 ${frameNs / 1_000_000}ms）")
     }
 
     private fun createSession() {

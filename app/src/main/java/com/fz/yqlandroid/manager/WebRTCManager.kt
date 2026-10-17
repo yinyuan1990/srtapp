@@ -2857,6 +2857,11 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             
             // 快门速度（采集帧率）: 60~600
             "cjfps" -> {
+                // §141 SRT直推的曝光只认「SRT设置」的 srt_exposure；超级帧率(cjfps)是 SRS/WebRTC 链路的，不混用
+                if (srtDirectMode) {
+                    Log.d("meidui", "📸 [SRT直推] 忽略 cjfps=${config["cjfps"]}（SRT 曝光在 PC「SRT设置」调）")
+                    return
+                }
                 val cj = (config["cjfps"] as? Number)
                 if (cj != null) {
                     Log.d("meidui", "📸 [快门链路①] 收到 ptype=cjfps 值=${cj.toInt()} → setShutterSpeed")
@@ -2899,15 +2904,21 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             //    设备端只保留 快门(cjfps) + ISO增益 两个采集参数。ISO 与快门同属手动曝光
             //    (AE OFF)，快门未开时 HAL 会忽略 SENSOR_SENSITIVITY（日志可见）。
             "test_brightness" -> {
+                // §141 同上：SRT直推的 ISO 在「SRT设置」调，不吃 SRS/WebRTC 的 test_brightness
+                if (srtDirectMode) {
+                    Log.d("meidui", "🎚 [SRT直推] 忽略 test_brightness（SRT 曝光在 PC「SRT设置」调）")
+                    return
+                }
                 val v = (config["value"] as? Number)
                     ?: (config["testBrightness"] as? Number)
                 if (v != null) setIsoGain(v.toInt())
                 else Log.w(TAG, "⚠️ ptype=test_brightness 缺少 value，忽略")
             }
             
-            // §141 SRT直推专有：曝光模式 / 自动曝光补偿（PC「SRT设置」→ {ev, auto}）。
-            //   auto=true → 退出手动快门(cjfps)，回到 Camera2 自动曝光（test-Android 同款，亮度由 AE 决定）；
-            //   ev 只在自动曝光下生效（-2~+3EV，Camera2ParamApplier 再按机型 AE_COMPENSATION_RANGE 夹一次）。
+            // §141 SRT直推独立曝光（PC「SRT设置」，与 SRS/WebRTC 的 cjfps/test_brightness 完全分开）：
+            //   {shutterNs, iso, ev, auto}，语义照 test-android 网页控制：快门/ISO 0=自动，只手动一项时
+            //   另一项按测光折算（SdCameraSource.applySrtExposure）；auto=true → 两项都回自动；
+            //   ev 只在两项都自动时生效（按机型 AE_COMPENSATION_RANGE 再夹）。
             "srt_exposure" -> {
                 if (!srtDirectMode) {
                     Log.d("meidui", "📡 [SRT设置] 非 SRT直推，忽略 srt_exposure")
@@ -2917,14 +2928,22 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
                     is Boolean -> v
                     is String -> v.equals("true", ignoreCase = true)
                     is Number -> v.toInt() != 0
-                    else -> true
+                    else -> false
                 }
-                (config["ev"] as? Number)?.let { _srtExposureEv = it.toFloat().coerceIn(-2f, 3f) }
-                if (auto) _shutterEnabled = false
+                (config["shutterNs"] as? Number)?.let { _srtShutterNs = it.toLong().coerceAtLeast(0L) }
+                (config["iso"] as? Number)?.let { _srtIso = it.toInt().coerceAtLeast(0) }
+                (config["ev"] as? Number)?.let { _srtExposureEv = it.toFloat().coerceIn(-4f, 4f) }
+                if (auto) { _srtShutterNs = 0L; _srtIso = 0 }
                 val ok = applyCameraParams()
-                Log.d("meidui", "📡 [SRT设置] 曝光=${if (_shutterEnabled) "手动快门 1/${_currentShutterSpeed}s" else "自动"} EV=$_srtExposureEv 注入=${if (ok) "成功" else "等待会话"}")
+                Log.d("meidui", "📡 [SRT设置] 快门=${if (_srtShutterNs > 0) "1/${1_000_000_000L / _srtShutterNs}s" else "自动"}" +
+                        " ISO=${if (_srtIso > 0) _srtIso.toString() else "自动"} EV=$_srtExposureEv 注入=${if (ok) "成功" else "等待会话"}")
                 if (!ok) applyCameraParamsWithRetry("SRT曝光注入失败重试")
+                // 等新请求出几帧再回读实际曝光
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ reportSrtCamState() }, 500)
             }
+
+            // §141 PC「SRT设置」打开期间每秒问一次 → 回 srtCamState
+            "srt_cam_query" -> reportSrtCamState()
 
             // 🔥 白平衡（与iOS white_balance/applyWhiteBalance一致）
             "white_balance" -> {
@@ -3063,6 +3082,8 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             config.cjfps?.let { _currentShutterSpeed = it.coerceIn(60, 1000) }
             _shutterEnabled = false
             _srtExposureEv = 0f   // 每次进推流页从自动曝光 0EV 开始（PC「SRT设置」默认也是 0EV）
+            _srtShutterNs = 0L
+            _srtIso = 0
             Log.d("meidui", "📸 [SRT直推] 启动保持自动曝光，初始 cjfps=${config.cjfps} 只记录不启用")
         } else {
             config.cjfps?.let { applyRemoteConfig(mapOf("ptype" to "cjfps", "cjfps" to it)) }
@@ -3143,6 +3164,20 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
     private var _shutterEnabled: Boolean = false     // 是否启用手动快门(cjfps)；false=自动曝光
     // §141 SRT直推的自动曝光补偿(EV)。默认 0 = 与 test-Android 一致（它也不设补偿）；PC「SRT设置」可调。
     private var _srtExposureEv: Float = 0f
+    // §141 SRT直推独立快门/ISO（0=自动），见 srt_exposure
+    private var _srtShutterNs: Long = 0L
+    private var _srtIso: Int = 0
+
+    /** §141 回 PC「SRT设置」：引擎状态（能力/实际曝光/链路）+ 当前请求值 */
+    fun reportSrtCamState() {
+        val engine = srtEngine ?: return
+        val st = LinkedHashMap<String, Any?>(engine.cameraState())
+        st["reqShutterNs"] = _srtShutterNs
+        st["reqIso"] = _srtIso
+        st["ev"] = _srtExposureEv
+        st["zoom"] = _currentZoom
+        WebSocketManager.instance.sendSrtCamState(st)
+    }
     private var _isoPercent: Int? = null             // ISO 增益 0~100（null=快门模式用 ISO 中值）；仅手动快门(AE OFF)下生效
     private var _currentWhiteBalance: Int = 50
     val currentWhiteBalance: Int get() = _currentWhiteBalance
@@ -3174,8 +3209,11 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             focus = _currentFocus,
             autoFocus = _autoFocus,
             zoom = _currentZoom,
-            shutterCjfps = if (_shutterEnabled) _currentShutterSpeed else null,
-            manualIsoPercent = _isoPercent,
+            // §141 SRT直推不走 cjfps/ISO% 那套手动曝光，改用 srtShutterNs/srtIso（test-android 算法，SdCameraSource 落地）
+            shutterCjfps = if (_shutterEnabled && !srtDirectMode) _currentShutterSpeed else null,
+            manualIsoPercent = if (srtDirectMode) null else _isoPercent,
+            srtShutterNs = if (srtDirectMode) _srtShutterNs else 0L,
+            srtIso = if (srtDirectMode) _srtIso else 0,
             whiteBalanceSlider = if (_whiteBalanceManual) _currentWhiteBalance else null,
             whiteBalanceLocked = _whiteBalanceLocked,
             // 🔥 钉死 AE 帧率区间，防低光时相机自动 30→15（iOS 无此坑，Android Camera2 经典问题）

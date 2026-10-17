@@ -858,6 +858,25 @@ class WebSocketManager private constructor() {
     }
 
     /**
+     * §141 SRT直推相机状态回传（PC「SRT设置」每秒 srt_cam_query 时回一次）：
+     * 曝光能力范围、实际快门/ISO、请求值、编码分辨率/帧率/码率、SRT 延迟/RTT/发送缓冲。
+     */
+    fun sendSrtCamState(state: Map<String, Any?>) {
+        val id = deviceId ?: return
+        val config = LinkedHashMap<String, Any?>(state)
+        config["ptype"] = "srtCamState"
+        config["device_id"] = id
+        val payload = mapOf(
+            "type" to "CONFIG_UPDATE",
+            "deviceId" to id,
+            "config" to config,
+            "operator" to id,
+            "timestamp" to System.currentTimeMillis()
+        )
+        sendStompMessage("/topic/device/$id/config", gson.toJson(payload))
+    }
+
+    /**
      * 🔥 发送 set_fps_ack 确认（与iOS一致）
      */
     fun sendSetFpsAck(fps: Int, status: String = "applied") {
