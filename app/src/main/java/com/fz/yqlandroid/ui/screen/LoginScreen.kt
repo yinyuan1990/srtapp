@@ -72,13 +72,9 @@ fun LoginScreen(
     // ⭐ 摄像头模式（第四十八章）："builtin"=自带(Camera2) / "otg"=外接OTG(UVC)，仅 Android
     // ⭐⭐ 2026-08-04 拆分：本仓库为主版"金凤凰"（自带摄像头），推流恒为 builtin；
     //   OTG 已拆为独立 App"金凤凰OTG"（仓库 android-otg，包名 com.fz.yqlandroid.otg，可同装）。
-    //   登录页保留"外接OTG"按钮作为**下载入口**：点击弹框 → 直接下载 OTG 版 APK
-    //  （下载地址取总后台「App更新配置」的 otg 块，版本独立）。代码同构，OTG 代码保留不删。
-    var selectedCameraMode by remember { mutableStateOf("builtin") }
+    //   §140 登录页的「摄像头」一栏（含 OTG 下载入口）已移除，推流恒为 builtin。代码同构，OTG 代码保留不删。
     // ⭐ §130 登录前权限引导弹框
     var showPermissionGuide by remember { mutableStateOf(false) }
-    // OTG 下载弹框
-    var showOtgDownloadDialog by remember { mutableStateOf(false) }
     // ⭐ 强制更新：非空 = 后台配置的最低版本高于本地 → 弹不可关闭弹窗（AppUpdateManager 公共接口）
     var forceUpdate by remember { mutableStateOf<com.fz.yqlandroid.manager.AppUpdateManager.ForceUpdate?>(null) }
     // ⭐ 设备号弹框（点击设备号显示完整 ID + 复制）
@@ -106,8 +102,6 @@ fun LoginScreen(
             password = savedPassword
             rememberPassword = true
         }
-        // ⭐ 主版：模式恒为 builtin（不读旧记忆——老版本可能存过 otg，恢复后没有入口改回来）
-        selectedCameraMode = "builtin"
         // ⭐ 强制更新检查（公共接口，失败放行不拦门）
         forceUpdate = com.fz.yqlandroid.manager.AppUpdateManager.checkForceUpdate(context)
     }
@@ -290,56 +284,12 @@ fun LoginScreen(
                         )
                     }
                     
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 30.dp),
-                        color = Color(0xFFF0F0F0)
-                    )
-                    
                     // ⭐ §53.4-定稿（2026-07-28）：原「连接方式(多人/单人线路)」与「H264/H265 编码」
                     //   两组选项已移除。线路 = 推流前按"与观看端是否同 WiFi"自动决定（同 WiFi 才 P2P，
                     //   否则 SRS）；编码 = 总后台配置（默认 H265，本机硬编或观看端内核不支持则回退 H264）。
                     //   决策逻辑在 `manager/SessionPolicy.kt`（与 iOS 同构）。
-                    //   登录页只保留下面的「摄像头模式：自带 / 外接OTG」。
-
-                    // ⭐ 摄像头模式选择（第四十八章）：自带(Camera2) / 外接OTG(UVC)
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 30.dp),
-                        color = Color(0xFFF0F0F0)
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "摄像头",
-                            fontSize = 16.sp,
-                            color = Color(0xFF1A1A1A)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        // ⭐ 主版推流恒为自带；"外接OTG"按钮保留为独立 App 的**下载入口**（点击弹框下载）
-                        listOf("builtin" to "自带", "otg" to "外接OTG").forEach { (mode, label) ->
-                            val selected = selectedCameraMode == mode
-                            Box(
-                                modifier = Modifier
-                                    .padding(end = 8.dp)
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(if (selected) Color(0xFF65AEF7) else Color(0xFFF0F0F0))
-                                    .clickable {
-                                        if (mode == "otg") showOtgDownloadDialog = true
-                                        else selectedCameraMode = mode
-                                    }
-                                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = label,
-                                    fontSize = 14.sp,
-                                    color = if (selected) Color.White else Color(0xFF666666)
-                                )
-                            }
-                        }
-                    }
+                    // ⭐ §140：「摄像头：自带 / 外接OTG」一栏也已移除——OTG 是独立 App（金凤凰OTG），
+                    //   主版恒为自带摄像头（登录时 camera_mode 固定写 builtin）。
                 }
             }
             
@@ -399,9 +349,8 @@ fun LoginScreen(
                                             remove("password")
                                         }
                                         putBoolean("remember", rememberPassword)
-                                        // ⭐ §53.4：线路/编码已不由用户选（登录页也不再显示），
-                                        //   这里只记住摄像头模式（自带 / 外接OTG）。
-                                        putString("selected_camera_mode", selectedCameraMode)
+                                        // ⭐ §140：摄像头一栏已移除，清掉老版本记住的选择
+                                        remove("selected_camera_mode")
                                         apply()
                                     }
                                     
@@ -426,8 +375,9 @@ fun LoginScreen(
                                         //   SessionPolicy 在推流前按"与观看端是否同 WiFi"自动决定。
                                         val backendConnectMode = (response.connectMode ?: "auto").lowercase()
                                         putString("connect_mode", backendConnectMode)
-                                        // ⭐ 摄像头模式运行时决策值（WebRTCManager.startPreview 读取，第四十八章）
-                                        putString("camera_mode", selectedCameraMode)
+                                        // ⭐ 摄像头模式运行时决策值（WebRTCManager.startPreview 读取，第四十八章）；
+                                        //   §140 主版恒为自带（OTG 是独立 App），老版本存过 otg 也在这里覆盖掉
+                                        putString("camera_mode", "builtin")
                                         // ⭐ §131 推流方式固定 SRT（登录页不再显示选项），清掉 §129 测试期的旧选择
                                         remove("publish_transport")
                                         // ⭐ §53.4.4 编码默认值改由总后台配置（本机硬编或观看端内核
@@ -659,38 +609,6 @@ fun LoginScreen(
                     }
             )
         }
-    }
-
-    // ⭐⭐ 2026-08-04 OTG 下载弹框：外接OTG 已拆为独立 App"金凤凰OTG"，
-    //   点击"立即下载"直接用浏览器下载 APK（地址取总后台「App更新配置」otg 块，版本独立）。
-    if (showOtgDownloadDialog) {
-        AlertDialog(
-            onDismissRequest = { showOtgDownloadDialog = false },
-            title = { Text("金凤凰OTG") },
-            text = {
-                Text("外接OTG摄像头功能已升级为独立App「金凤凰OTG」，可与本App同时安装。点击下方按钮直接下载安装。")
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch {
-                        val url = com.fz.yqlandroid.manager.AppUpdateManager.fetchOtgDownloadUrl()
-                        if (url.isNullOrBlank()) {
-                            Toast.makeText(context, "未获取到下载地址，请联系管理员", Toast.LENGTH_SHORT).show()
-                        } else {
-                            try {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                showOtgDownloadDialog = false
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "打开下载链接失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                }) { Text("立即下载") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showOtgDownloadDialog = false }) { Text("取消") }
-            }
-        )
     }
 
     // ⭐ 设备号弹框：完整 ID + 复制按钮
