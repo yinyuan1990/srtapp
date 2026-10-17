@@ -157,6 +157,8 @@ internal class SdH264Encoder(
             f.setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_FULL)
             f.setInteger("prepend-sps-pps-to-idr-frames", 1)
             if (Build.VERSION.SDK_INT >= 33) f.setInteger("video-encoding-statistics-level", 1)
+            // §143 编码器最多压 1 帧再出（实测 采集→编码完成 ≈140ms）；不认的机型配置失败会自动降到下一档
+            if (Build.VERSION.SDK_INT >= 30) f.setInteger(MediaFormat.KEY_LATENCY, 1)
         }
         if (opts and OPT_QP != 0) {
             f.setInteger("video-qp-i-min", cfg.qpIMin)
