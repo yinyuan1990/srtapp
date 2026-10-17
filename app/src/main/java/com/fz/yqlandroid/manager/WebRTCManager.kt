@@ -92,6 +92,9 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
     @Volatile private var srtHost: String = ""
     @Volatile private var srtPort: Int = 0
 
+    /** §143 SRT直推相关日志：logcat（meidui）+ 总后台「SRT日志」上报 */
+    private fun srtLog(msg: String) = com.fz.yqlandroid.manager.srtdirect.SdLog.i(msg)
+
     /** §134 当前是否走 SRT直推（默认 SRT + 自带摄像头；force_webrtc 或 OTG 走原链路） */
     val srtDirectMode: Boolean
         get() = srtTransport && context.getSharedPreferences("token_prefs", Context.MODE_PRIVATE)
@@ -873,7 +876,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             srtEngine?.stopCamera()
             isPreviewRunning = false
             appliedCaptureFps = 0
-            Log.d("meidui", "📡 [SRT直推] 预览/采集已停止")
+            srtLog("预览/采集已停止")
             return
         }
         
@@ -1169,7 +1172,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
 
         override fun onCameraError(msg: String) {
             cameraDead = true
-            Log.d("meidui", "⚠️ [SRT直推] 相机错误(cameraDead=true): $msg")
+            srtLog("⚠️ 相机错误(cameraDead=true): $msg")
             scheduleCaptureRecovery("相机错误:${msg.take(60)}")
         }
 
@@ -1189,7 +1192,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         isPreviewRunning = true
         cameraDead = false
         appliedCaptureFps = r.fps
-        Log.d("meidui", "📡 [SRT直推] 启动采集 档位=${profileName(currentProfile)} ${r.plan.width}x${r.plan.height}@${r.fps}" +
+        srtLog("启动采集 档位=${profileName(currentProfile)} ${r.plan.width}x${r.plan.height}@${r.fps}" +
                 " ${r.kbps}kbps（清晰度${_currentQualityPercent}%）${if (isFrontCamera) "前置" else "后置"}")
     }
 
@@ -1209,7 +1212,10 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         srtPort = com.fz.yqlandroid.manager.srtdirect.SrtDirectParams.serverPort(ctx)
         WebSocketManager.srtPlayHost = srtHost
         WebSocketManager.srtPlayPort = srtPort
-        Log.d("meidui", "📡 [SRT直推] ═══ 开始推流 srt://$srtHost:$srtPort 流=$streamKey 档位=${profileName(currentProfile)}" +
+        // §143 SRT日志上报（总后台「SRT管理 → SRT日志」开关），流名与 PC 拉流端一致 → 两端日志同目录
+        com.fz.yqlandroid.manager.srtdirect.SrtLogReporter.start(streamKey,
+            (ctx.getSharedPreferences("token_prefs", Context.MODE_PRIVATE).getString("username", "") ?: "").replace(":", ""))
+        srtLog("═══ 开始推流 srt://$srtHost:$srtPort 流=$streamKey 档位=${profileName(currentProfile)}" +
                 " 推送${currentFps}fps 清晰度${_currentQualityPercent}% 参数[${srtPlan().describe()}] ═══")
         onConnectionStateChanged?.invoke("SRT连接中...")
 
@@ -1219,7 +1225,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
                     if (!isPreviewRunning) startPreview()
                     val engine = srtEngine
                     if (engine == null) {
-                        Log.d("meidui", "⚠️ [SRT直推] 引擎未创建（预览启动失败？），推流中止")
+                        srtLog("⚠️ 引擎未创建（预览启动失败？），推流中止")
                         onConnectionStateChanged?.invoke("推流失败: 采集未启动")
                         return@withContext
                     }
@@ -1231,7 +1237,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
                     startStats()
                 }
             } catch (e: Exception) {
-                Log.d("meidui", "⚠️ [SRT直推] 启动异常: ${e.message}")
+                srtLog("⚠️ 启动异常: ${e.message}")
                 withContext(Dispatchers.Main) { onConnectionStateChanged?.invoke("推流失败: ${e.message}") }
             } finally {
                 publishStarting = false
@@ -1259,7 +1265,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
                     com.fz.yqlandroid.network.NetworkService.getStreamToken(jwt, key, username)
                 }.getOrNull()?.token ?: ""
             } catch (e: Exception) {
-                Log.d("meidui", "⚠️ [SRT直推] 获取推流Token异常: ${e.message}（按无Token连接）")
+                srtLog("⚠️ 获取推流Token异常: ${e.message}（按无Token连接）")
                 ""
             }
         }
@@ -1268,9 +1274,9 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             else -> "publish:$key:$username:$token"
         }
         if (streamId.toByteArray().size > 512) {
-            Log.d("meidui", "⚠️ [SRT直推] streamid 长度 ${streamId.toByteArray().size} 超过 SRT 上限 512，服务器会拒绝")
+            srtLog("⚠️ streamid 长度 ${streamId.toByteArray().size} 超过 SRT 上限 512，服务器会拒绝")
         }
-        Log.d("meidui", "📡 [SRT直推] 第${attempt + 1}次连接 流名=$key 账号=$username token=${if (token.isNotEmpty()) "已取到" else "无"}")
+        srtLog("第${attempt + 1}次连接 流名=$key 账号=$username token=${if (token.isNotEmpty()) "已取到" else "无"}")
         return com.fz.yqlandroid.manager.srtdirect.SdSrtSender.Target(
             host = srtHost, port = srtPort, streamId = streamId,
             latencyMs = plan.latencyMs, maxBwKbps = plan.maxBwKbps,
@@ -1285,12 +1291,13 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             WebSocketManager.isPublishingFlag = 1
             onConnectionStateChanged?.invoke("SRT直推中")
             srtLastStateText = "SRT直推中"
-            Log.d("meidui", "📡 [SRT直推] ✅ 出流（第${attempt + 1}次连接）流名=$streamKey 拉流=srt://$srtHost:$srtPort?streamid=read:$streamKey → publishStatus=1")
+            srtLog("✅ 出流（第${attempt + 1}次连接）流名=$streamKey 拉流=srt://$srtHost:$srtPort?streamid=read:$streamKey → publishStatus=1")
         }
     }
 
     private fun stopSrtPublish() {
         srtEngine?.stopSender()
+        com.fz.yqlandroid.manager.srtdirect.SrtLogReporter.stop()   // §143
         // §129 混合 SRT 推流器已退役；万一残留也一并停掉
         srtPublisher?.let { pub ->
             srtPublisher = null
@@ -2315,7 +2322,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             engine.switchCamera(isFrontCamera)
             applyCameraParams()
             reportLensCaps()
-            Log.d("meidui", "📡 [SRT直推] 切换到${if (isFrontCamera) "前置" else "后置"}摄像头")
+            srtLog("切换到${if (isFrontCamera) "前置" else "后置"}摄像头")
             return
         }
         (videoCapturer as? CameraVideoCapturer)?.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
@@ -2859,7 +2866,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             "cjfps" -> {
                 // §141 SRT直推的曝光只认「SRT设置」的 srt_exposure；超级帧率(cjfps)是 SRS/WebRTC 链路的，不混用
                 if (srtDirectMode) {
-                    Log.d("meidui", "📸 [SRT直推] 忽略 cjfps=${config["cjfps"]}（SRT 曝光在 PC「SRT设置」调）")
+                    srtLog("📸 忽略 cjfps=${config["cjfps"]}（SRT 曝光在 PC「SRT设置」调）")
                     return
                 }
                 val cj = (config["cjfps"] as? Number)
@@ -2906,7 +2913,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             "test_brightness" -> {
                 // §141 同上：SRT直推的 ISO 在「SRT设置」调，不吃 SRS/WebRTC 的 test_brightness
                 if (srtDirectMode) {
-                    Log.d("meidui", "🎚 [SRT直推] 忽略 test_brightness（SRT 曝光在 PC「SRT设置」调）")
+                    srtLog("🎚 忽略 test_brightness（SRT 曝光在 PC「SRT设置」调）")
                     return
                 }
                 val v = (config["value"] as? Number)
@@ -2921,7 +2928,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             //   ev 只在两项都自动时生效（按机型 AE_COMPENSATION_RANGE 再夹）。
             "srt_exposure" -> {
                 if (!srtDirectMode) {
-                    Log.d("meidui", "📡 [SRT设置] 非 SRT直推，忽略 srt_exposure")
+                    srtLog("[SRT设置] 非 SRT直推，忽略 srt_exposure")
                     return
                 }
                 val auto = when (val v = config["auto"]) {
@@ -2935,7 +2942,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
                 (config["ev"] as? Number)?.let { _srtExposureEv = it.toFloat().coerceIn(-4f, 4f) }
                 if (auto) { _srtShutterNs = 0L; _srtIso = 0 }
                 val ok = applyCameraParams()
-                Log.d("meidui", "📡 [SRT设置] 快门=${if (_srtShutterNs > 0) "1/${1_000_000_000L / _srtShutterNs}s" else "自动"}" +
+                srtLog("[SRT设置] 快门=${if (_srtShutterNs > 0) "1/${1_000_000_000L / _srtShutterNs}s" else "自动"}" +
                         " ISO=${if (_srtIso > 0) _srtIso.toString() else "自动"} EV=$_srtExposureEv 注入=${if (ok) "成功" else "等待会话"}")
                 if (!ok) applyCameraParamsWithRetry("SRT曝光注入失败重试")
                 // 实际曝光回读交给 PC 每秒的 srt_cam_query（PC 拖动时每格立即下发，这里不再逐条回报，免得刷屏）
@@ -2995,11 +3002,11 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
                         }))
                     }
                 } catch (e: Exception) {
-                    Log.d("meidui", "⚠️ [SRT直推] srt_params 解析失败: ${e.message} config=$config")
+                    srtLog("⚠️ srt_params 解析失败: ${e.message} config=$config")
                     return
                 }
                 com.fz.yqlandroid.manager.srtdirect.SrtDirectParams.mergeRemote(ctx, patch)
-                Log.d("meidui", "📡 [SRT直推] 后台改参 ${patch.toString().take(300)} → 生效 [${srtPlan().describe()}]")
+                srtLog("后台改参 ${patch.toString().take(300)} → 生效 [${srtPlan().describe()}]")
                 if (srtDirectMode) {
                     // 档位码率/帧率可能变了：按新档位值重算（推送帧率仍受 PC 设定封顶）
                     val plan = srtPlan()
@@ -3083,7 +3090,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             _srtExposureEv = 0f   // 每次进推流页从自动曝光 0EV 开始（PC「SRT设置」默认也是 0EV）
             _srtShutterNs = 0L
             _srtIso = 0
-            Log.d("meidui", "📸 [SRT直推] 启动保持自动曝光，初始 cjfps=${config.cjfps} 只记录不启用")
+            srtLog("📸 启动保持自动曝光，初始 cjfps=${config.cjfps} 只记录不启用")
         } else {
             config.cjfps?.let { applyRemoteConfig(mapOf("ptype" to "cjfps", "cjfps" to it)) }
         }

@@ -3,18 +3,20 @@ package com.fz.yqlandroid.manager.srtdirect
 import android.util.Log
 
 /**
- * §134 SRT直推统一日志：`meidui` 标签 + `[SRT直推]` 前缀，
- * 由 P2PLogReporter 按推流ID上报（总后台「P2P日志」开关，文件 Android-p2p.log）。
+ * §134 SRT直推统一日志：`meidui` 标签 + `[SRT直推]` 前缀。
+ * §143 同时直接进 [SrtLogReporter]（总后台「SRT管理 → SRT日志」开关打开时上报，文件 Android-srt.log）。
  */
 internal object SdLog {
     private const val TAG = "meidui"
 
     fun i(msg: String) {
         Log.d(TAG, "📡 [SRT直推] $msg")
+        SrtLogReporter.line(msg)
     }
 
     fun w(msg: String) {
         Log.d(TAG, "⚠️ [SRT直推] $msg")
+        SrtLogReporter.line("⚠️ $msg")
     }
 
     /** streamid 末段是一次性推流 token / 拉流 JWT，不进日志 */
