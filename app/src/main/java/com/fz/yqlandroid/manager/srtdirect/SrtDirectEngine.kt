@@ -279,7 +279,13 @@ internal class SrtDirectEngine(private val context: Context, private val host: H
             // 换编码器时新旧短暂并存：只收当前编码器的输出（muxer 非线程安全）
             if (encoder === enc) {
                 val s = sender
-                if (s != null && s.connected) s.offer(synchronized(muxer) { muxer.mux(data, ptsUs, isKey) }, isKey)
+                if (s != null && s.connected) {
+                    // §142 每帧打上 采集/编码完成 墙钟时间（SEI），PC 据此算端到端延迟
+                    val nowWall = System.currentTimeMillis()
+                    val cap = SdLatencySei.captureWallMs(ptsUs, nowWall)
+                    val stamped = SdLatencySei.insert(data, if (cap > 0) cap else nowWall, nowWall)
+                    s.offer(synchronized(muxer) { muxer.mux(stamped, ptsUs, isKey) }, isKey)
+                }
             }
         }, onFatal = { msg ->
             post {

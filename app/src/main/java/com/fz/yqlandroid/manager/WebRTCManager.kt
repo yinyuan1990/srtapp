@@ -2943,7 +2943,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             }
 
             // §141 PC「SRT设置」打开期间每秒问一次 → 回 srtCamState
-            "srt_cam_query" -> reportSrtCamState()
+            "srt_cam_query" -> reportSrtCamState((config["t0"] as? Number)?.toLong())
 
             // 🔥 白平衡（与iOS white_balance/applyWhiteBalance一致）
             "white_balance" -> {
@@ -3169,9 +3169,12 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
     private var _srtIso: Int = 0
 
     /** §141 回 PC「SRT设置」：引擎状态（能力/实际曝光/链路）+ 当前请求值 */
-    fun reportSrtCamState() {
+    fun reportSrtCamState(pcT0: Long? = null) {
         val engine = srtEngine ?: return
         val st = LinkedHashMap<String, Any?>(engine.cameraState())
+        // §142 时钟对齐：回显 PC 发问时刻 + 手机此刻墙钟，PC 用往返中点算两边时钟差
+        if (pcT0 != null) st["t0"] = pcT0
+        st["phoneMs"] = System.currentTimeMillis()
         st["reqShutterNs"] = _srtShutterNs
         st["reqIso"] = _srtIso
         st["ev"] = _srtExposureEv
