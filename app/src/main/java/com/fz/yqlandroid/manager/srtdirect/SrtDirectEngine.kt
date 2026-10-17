@@ -196,6 +196,21 @@ internal class SrtDirectEngine(private val context: Context, private val host: H
         m["fps"] = r?.fps ?: 0
         m["kbps"] = r?.kbps ?: 0
         m["latencyMs"] = s?.currentTarget?.latencyMs ?: (r?.plan?.latencyMs ?: 0)
+        // §148 PC「SRT设置」档位 / QP 栏：当前档位 + 编码器实际 QP 上下限（编码器还没建好时用档位参数）；
+        //   qpOk = 编码器认 QP 上下限键（降级到「去掉QP上下限」档时不认）；qpAvg = 本秒平均 QP（Android 13+，-1 = 拿不到）；
+        //   qpPMaxNow = 峰值控制当前的 P 帧 QP 上限（运行中可能被临时抬高）
+        if (r != null) {
+            val enc = encoder
+            val qc = enc?.config
+            m["profile"] = r.plan.profile
+            m["qpIMin"] = qc?.qpIMin ?: r.plan.qpIMin
+            m["qpIMax"] = qc?.qpIMax ?: r.plan.qpIMax
+            m["qpPMin"] = qc?.qpPMin ?: r.plan.qpPMin
+            m["qpPMax"] = qc?.qpPMax ?: r.plan.qpPMax
+            m["qpOk"] = enc?.qpConfigured ?: true
+            m["qpAvg"] = enc?.statQp ?: -1
+            m["qpPMaxNow"] = synchronized(peak) { peak.curPMax }
+        }
         if (s != null) {
             m["rttMs"] = s.rttMs.toInt()
             m["sndBufMs"] = s.sndBufMs

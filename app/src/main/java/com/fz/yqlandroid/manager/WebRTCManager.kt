@@ -3185,6 +3185,12 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         st["reqIso"] = _srtIso
         st["ev"] = _srtExposureEv
         st["zoom"] = _currentZoom
+        // §148 PC「SRT设置」档位按钮上显示各档的生效分辨率/帧率/码率（总后台「SRT管理→参数设置」能改，PC 自己不知道）
+        val ctx = srtCtx()
+        st["presets"] = com.fz.yqlandroid.manager.srtdirect.SrtDirectParams.PROFILES.associateWith { k ->
+            val p = com.fz.yqlandroid.manager.srtdirect.SrtDirectParams.plan(ctx, k)
+            mapOf("width" to p.width, "height" to p.height, "fps" to p.fps, "kbps" to p.bitrateKbps)
+        }
         WebSocketManager.instance.sendSrtCamState(st)
     }
     private var _isoPercent: Int? = null             // ISO 增益 0~100（null=快门模式用 ISO 中值）；仅手动快门(AE OFF)下生效
