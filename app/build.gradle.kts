@@ -9,7 +9,9 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.fz.yqlandroid"
+        // srtapp：applicationId 改后缀 = 系统层面另一个 App，与主版"金凤凰"可同装。
+        //   namespace/代码包名不动，与主仓库 yql-android 代码同构，便于 cherry-pick。
+        applicationId = "com.fz.srtapp"
         minSdk = 24
         targetSdk = 35
         versionCode = 3
