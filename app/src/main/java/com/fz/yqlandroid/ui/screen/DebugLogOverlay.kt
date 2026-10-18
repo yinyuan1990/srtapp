@@ -54,19 +54,37 @@ import kotlin.math.roundToInt
 private const val DISPLAY_LINES = 3000
 private const val COPY_MAX_CHARS = 150_000
 
-/** 悬浮按钮开关：登录页连点 Logo 5 次切换，持久化 */
+/**
+ * 悬浮窗开关：登录页连点 Logo 5 次切换，持久化。
+ * 有「显示在其他应用上层」权限 → 系统悬浮窗（桌面也显示）；没权限 → App 内悬浮按钮兜底。
+ */
 object DebugLogOverlayState {
     val visible = mutableStateOf(false)
+    /** 当前用的是系统悬浮窗（App 内按钮就不画了） */
+    val systemWindow = mutableStateOf(false)
 
     fun init(context: Context) {
         visible.value = DebugLog.isOverlayEnabled(context)
+    }
+
+    /** Activity onResume 调：从授权页回来后切到系统悬浮窗 */
+    fun sync(context: Context) {
+        if (visible.value && FloatingLogWindow.canDraw(context)) FloatingLogWindow.show(context)
+        if (!visible.value) FloatingLogWindow.hide()
+        systemWindow.value = FloatingLogWindow.isShowing
     }
 
     fun toggle(context: Context) {
         val v = !visible.value
         visible.value = v
         DebugLog.setOverlayEnabled(context, v)
-        Toast.makeText(context, if (v) "已打开日志悬浮窗" else "已关闭日志悬浮窗", Toast.LENGTH_SHORT).show()
+        if (v && !FloatingLogWindow.canDraw(context)) {
+            Toast.makeText(context, "请允许「显示在其他应用上层」，退到桌面也能看日志", Toast.LENGTH_LONG).show()
+            FloatingLogWindow.requestPermission(context)
+        } else {
+            Toast.makeText(context, if (v) "已打开日志悬浮窗" else "已关闭日志悬浮窗", Toast.LENGTH_SHORT).show()
+        }
+        sync(context)
     }
 }
 
@@ -192,7 +210,7 @@ private fun lineColor(line: String): Color = when {
 }
 
 /** 当前状态快照放最前，正文超长时保留最新部分（剪贴板放太大会失败） */
-private fun buildCopyText(lines: List<String>): String {
+internal fun buildCopyText(lines: List<String>): String {
     val header = try { DebugLog.snapshot() } catch (_: Exception) { "" }
     var start = lines.size
     var total = 0
@@ -203,7 +221,7 @@ private fun buildCopyText(lines: List<String>): String {
     return header + "\n\n" + lines.subList(start, lines.size).joinToString("\n")
 }
 
-private fun copyToClipboard(context: Context, text: String) {
+internal fun copyToClipboard(context: Context, text: String) {
     try {
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("诊断日志", text))

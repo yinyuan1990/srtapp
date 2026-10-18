@@ -32,10 +32,17 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         AppNavHost()
-                        if (DebugLogOverlayState.visible.value) DebugLogOverlay()
+                        if (DebugLogOverlayState.visible.value && !DebugLogOverlayState.systemWindow.value) {
+                            DebugLogOverlay()
+                        }
                     }
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        DebugLogOverlayState.sync(this)
     }
 }

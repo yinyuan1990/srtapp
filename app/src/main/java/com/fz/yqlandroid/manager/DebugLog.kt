@@ -43,6 +43,10 @@ object DebugLog {
     private lateinit var oldFile: File
     private var writer: FileWriter? = null
     private val writeLock = Any()
+    private const val RECENT_ALL = 400
+    private const val RECENT_KEY = 800
+    private val recentAll = ArrayDeque<String>()
+    private val recentKey = ArrayDeque<String>()
 
     @Synchronized
     fun start(context: Context) {
@@ -70,6 +74,39 @@ object DebugLog {
 
     fun isKeyLine(line: String): Boolean = KEY_MARKERS.any { line.contains(it) } || line.startsWith("====")
 
+    /** 内存里的最近日志，给悬浮窗定时刷新用；完整历史用 [readLines] */
+    fun recentLines(keyOnly: Boolean): List<String> =
+        synchronized(writeLock) { (if (keyOnly) recentKey else recentAll).toList() }
+
+    private fun remember(line: String) {
+        recentAll.addLast(line)
+        if (recentAll.size > RECENT_ALL) recentAll.removeFirst()
+        if (isKeyLine(line)) {
+            recentKey.addLast(line)
+            if (recentKey.size > RECENT_KEY) recentKey.removeFirst()
+        }
+    }
+
+    /** 把上一个进程留在文件里的日志补进内存缓存的前面 */
+    private fun preloadRecent() {
+        val old = ArrayList<String>()
+        try {
+            if (oldFile.exists()) old.addAll(oldFile.readLines())
+            if (logFile.exists()) old.addAll(logFile.readLines())
+        } catch (_: Exception) {
+            return
+        }
+        synchronized(writeLock) {
+            val currentAll = recentAll.toList()
+            val currentKey = recentKey.toList()
+            recentAll.clear()
+            recentKey.clear()
+            for (line in old.dropLast(currentAll.size)) remember(line)
+            currentAll.forEach { recentAll.addLast(it); if (recentAll.size > RECENT_ALL) recentAll.removeFirst() }
+            currentKey.forEach { recentKey.addLast(it); if (recentKey.size > RECENT_KEY) recentKey.removeFirst() }
+        }
+    }
+
     /** 读最近的日志（含上一个文件），在 IO 线程调用 */
     fun readLines(keyOnly: Boolean, maxLines: Int): List<String> {
         if (!started) return emptyList()
@@ -89,6 +126,8 @@ object DebugLog {
             writer = null
             oldFile.delete()
             logFile.delete()
+            recentAll.clear()
+            recentKey.clear()
         }
         appendRaw("========== 已清空 ${now()} ==========")
         Log.i(TAG, snapshot())
@@ -146,6 +185,7 @@ object DebugLog {
 
     private fun startLogcatReader() {
         thread(name = "DiagLogcat", isDaemon = true) {
+            preloadRecent()
             while (true) {
                 try {
                     val proc = Runtime.getRuntime()
@@ -255,6 +295,7 @@ object DebugLog {
         synchronized(writeLock) {
             try {
                 val w = writer ?: FileWriter(logFile, true).also { writer = it }
+                remember(line)
                 w.write(line)
                 w.write("\n")
                 w.flush()

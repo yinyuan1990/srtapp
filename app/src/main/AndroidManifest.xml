@@ -38,6 +38,9 @@
          另一半（自启动开关）系统不开放 API，由 OemPermissionHelper 引导用户到 MIUI 设置页手动开。 -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- 诊断日志系统悬浮窗（登录页连点 Logo 5 次打开），退到桌面也能看日志 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
     <application
         android:allowBackup="true"
         android:usesCleartextTraffic="true"
