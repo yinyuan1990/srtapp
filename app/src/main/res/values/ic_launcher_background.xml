@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- srtapp 图标底色：青色，刻意区别于金凤凰（金/红） -->
+    <color name="ic_launcher_background">#00838F</color>
+</resources>

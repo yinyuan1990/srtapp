@@ -62,9 +62,13 @@ object AppUpdateManager {
     suspend fun checkForceUpdate(context: Context): ForceUpdate? = withContext(Dispatchers.IO) {
         try {
             val cfg = fetchUpdateConfig() ?: return@withContext null
-            // ⭐ 2026-08-04 版本独立：OTG 专版（applicationId 以 .otg 结尾）读 otg 块，
-            //   主版读 android 块。两仓库代码同构，按包名自动分流。
-            val key = if (context.packageName.endsWith(".otg")) "otg" else "android"
+            // ⭐ 版本独立：OTG 专版（.otg 结尾）读 otg 块；srtapp（com.fz.srtapp）读 srtapp 块；
+            //   主版金凤凰读 android 块。各仓库代码同构，按包名自动分流，强更互不影响。
+            val key = when {
+                context.packageName.endsWith(".otg") -> "otg"
+                context.packageName == "com.fz.srtapp" -> "srtapp"
+                else -> "android"
+            }
             val android = cfg.getAsJsonObject(key) ?: return@withContext null
 
             val enabled = android.get("enabled")?.asBoolean ?: false

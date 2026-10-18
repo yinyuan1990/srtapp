@@ -905,7 +905,8 @@ data class SrtServer(
 data class LatestVersions(
     val pc: String? = null,
     val ios: String? = null,
-    val android: String? = null
+    val android: String? = null,
+    val srtapp: String? = null   // srtapp 独立最新版本号（与金凤凰 android 独立）
 )
 
 /**
