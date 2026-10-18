@@ -22,15 +22,15 @@ import com.fz.yqlandroid.R
 import kotlinx.coroutines.delay
 
 /**
- * 启动页：应用图标 + 应用名。1 秒后跳转登录。
+ * 启动页：应用图标 + 应用名。1 秒后进入开始运动页，不直接登录。
  */
 @Composable
 fun SplashScreen(
-    onNavigateToLogin: () -> Unit
+    onFinished: () -> Unit
 ) {
     LaunchedEffect(Unit) {
         delay(1000)
-        onNavigateToLogin()
+        onFinished()
     }
 
     Box(

@@ -12,6 +12,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.fz.yqlandroid.ui.screen.LoginScreen
 import com.fz.yqlandroid.ui.screen.SplashScreen
+import com.fz.yqlandroid.ui.screen.StartExerciseScreen
 import com.fz.yqlandroid.ui.screen.StreamingScreen
 import com.fz.yqlandroid.ui.screen.QRScannerScreen
 import com.fz.yqlandroid.ui.screen.RegisterScreen
@@ -29,6 +30,7 @@ import androidx.navigation.navArgument
  */
 sealed class Screen(val route: String) {
     object Splash : Screen("splash")
+    object StartExercise : Screen("start_exercise")
     object Login : Screen("login")
     object Register : Screen("register")
     object Streaming : Screen("streaming")
@@ -116,10 +118,18 @@ fun AppNavHost(
         // 启动页
         composable(Screen.Splash.route) {
             SplashScreen(
-                onNavigateToLogin = {
-                    navController.navigate(Screen.Login.route) {
+                onFinished = {
+                    navController.navigate(Screen.StartExercise.route) {
                         popUpTo(Screen.Splash.route) { inclusive = true }
                     }
+                }
+            )
+        }
+
+        composable(Screen.StartExercise.route) {
+            StartExerciseScreen(
+                onStart = {
+                    navController.navigate(Screen.Login.route)
                 }
             )
         }
