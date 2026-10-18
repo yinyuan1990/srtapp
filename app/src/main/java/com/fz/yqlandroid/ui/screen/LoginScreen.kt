@@ -128,6 +128,14 @@ fun LoginScreen(
                 prepareAccount()
                 true
             }
+            // 本地存的是 PC 控制端账号（旧后端「找回本机账号」误返回了绑定这台手机的 PC 账号）→ 重新找回
+            msg.contains("不是设备端账号") -> {
+                AutoAccountManager.clearAccount(context)
+                username = ""
+                Toast.makeText(context, "正在重新获取本机账号", Toast.LENGTH_LONG).show()
+                prepareAccount()
+                true
+            }
             fields["code"] == "DEVICE_MISMATCH" && !deviceUsername.isNullOrBlank() -> {
                 AutoAccountManager.saveAccount(context, deviceUsername)
                 username = deviceUsername
