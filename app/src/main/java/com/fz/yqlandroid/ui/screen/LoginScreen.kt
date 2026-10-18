@@ -193,10 +193,26 @@ fun LoginScreen(
         ) {
             Spacer(modifier = Modifier.height(if (isSmallScreen) 12.dp else 60.dp))
             
+            var logoTaps by remember { mutableStateOf(0) }
+            var logoLastTap by remember { mutableStateOf(0L) }
             Image(
                 painter = painterResource(id = R.mipmap.app_icon),
                 contentDescription = "Logo",
-                modifier = Modifier.size(if (isSmallScreen) 52.dp else 94.dp)
+                modifier = Modifier
+                    .size(if (isSmallScreen) 52.dp else 94.dp)
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        // 连点 5 次（间隔 < 1s）切换日志悬浮窗
+                        val t = System.currentTimeMillis()
+                        logoTaps = if (t - logoLastTap < 1000) logoTaps + 1 else 1
+                        logoLastTap = t
+                        if (logoTaps >= 5) {
+                            logoTaps = 0
+                            DebugLogOverlayState.toggle(context)
+                        }
+                    }
             )
             
             Spacer(modifier = Modifier.height(if (isSmallScreen) 14.dp else 50.dp))
