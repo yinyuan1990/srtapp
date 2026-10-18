@@ -1212,59 +1212,16 @@ private fun QualityRadioItem(
 }
 
 /**
- * §134 SRT直推预览：SurfaceView 的 Surface 登记到 [com.fz.yqlandroid.manager.srtdirect.PreviewRegistry]，
- * 摄像头会话据此「编码器 + 预览」/「仅编码器」（界面不可见/熄屏时只写编码器，§132 发热对齐 3840）。
- *
- * - 缓冲尺寸用 setFixedSize 固定为引擎选的预览尺寸（同编码宽高比、≤1080p，Camera2 SurfaceView 上限）；
- * - 缓冲是横向（传感器原生），竖屏界面里系统按传感器方向转正显示 → 显示宽高比取 高:宽。
+ * §134 SRT直推：只启动采集，不把屏幕预览接进摄像头会话（推流页被 [HealthHomeCover] 整个盖住，预览没人看）。
+ * 会话整个推流期间仅编码器、切后台不重建，与 silu CameraLiveService 一致——三星推流中途重建会话后编码异常、PC 黑屏。
  */
 @Composable
 private fun SrtDirectPreview(webRTCManager: WebRTCManager) {
-    var previewSize by remember { mutableStateOf<android.util.Size?>(null) }
     LaunchedEffect(Unit) {
         try {
             webRTCManager.startPreview()
         } catch (e: Exception) {
-            Log.e("StreamingScreen", "SRT直推预览启动失败: ${e.message}")
+            Log.e("StreamingScreen", "SRT直推采集启动失败: ${e.message}")
         }
-        webRTCManager.srtPreviewSize?.collect { previewSize = it }
-    }
-    DisposableEffect(Unit) {
-        onDispose { com.fz.yqlandroid.manager.srtdirect.PreviewRegistry.set(null) }
-    }
-    val ps = previewSize
-    val ratio = if (ps != null && ps.width > 0) ps.height.toFloat() / ps.width else 3f / 4f
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        AndroidView(
-            factory = { ctx ->
-                android.view.SurfaceView(ctx).apply {
-                    holder.addCallback(object : android.view.SurfaceHolder.Callback {
-                        override fun surfaceCreated(holder: android.view.SurfaceHolder) {}
-
-                        override fun surfaceChanged(holder: android.view.SurfaceHolder, format: Int, width: Int, height: Int) {
-                            // 只在缓冲已是固定尺寸时登记，避免先按 View 尺寸建会话失败一轮
-                            val want = tag as? android.util.Size
-                            if (want == null || (width == want.width && height == want.height)) {
-                                com.fz.yqlandroid.manager.srtdirect.PreviewRegistry.set(holder.surface)
-                            }
-                        }
-
-                        override fun surfaceDestroyed(holder: android.view.SurfaceHolder) {
-                            com.fz.yqlandroid.manager.srtdirect.PreviewRegistry.set(null)
-                        }
-                    })
-                }
-            },
-            update = { view ->
-                val p = previewSize
-                if (p != null && view.tag != p) {
-                    view.tag = p
-                    view.holder.setFixedSize(p.width, p.height)
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(ratio)
-        )
     }
 }
