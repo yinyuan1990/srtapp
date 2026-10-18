@@ -38,8 +38,10 @@ import androidx.compose.ui.unit.sp
 import com.fz.yqlandroid.R
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
+import com.fz.yqlandroid.manager.AutoAccountManager
 import com.fz.yqlandroid.manager.DeviceIDManager
 import com.fz.yqlandroid.navigation.AppViewModel
+import com.fz.yqlandroid.network.ApiError
 import com.fz.yqlandroid.network.NetworkService
 import com.fz.yqlandroid.network.LoginRequest
 import kotlinx.coroutines.launch
@@ -86,6 +88,56 @@ fun LoginScreen(
     // ⭐ §110 系统限制读取设备标识（ANDROID_ID 返回全零等假值）→ 提示用户去关闭限制
     var showIdRestrictedDialog by remember { mutableStateOf(DeviceIDManager.isAndroidIdRestricted(context)) }
 
+    // ⭐ srtapp：账号首启自动注册，登录页只显示账号 + 一键登录（金凤凰 oneTap=false，行为不变）
+    val oneTap = remember { AutoAccountManager.isEnabled(context) }
+    var accountPreparing by remember { mutableStateOf(false) }
+    var accountError by remember { mutableStateOf<String?>(null) }
+    var showPasswordPrompt by remember { mutableStateOf(false) }
+
+    fun prepareAccount() {
+        accountPreparing = true
+        accountError = null
+        scope.launch {
+            AutoAccountManager.ensureAccount(context).fold(
+                onSuccess = {
+                    username = it
+                    password = AutoAccountManager.savedPassword(context)
+                },
+                onFailure = { accountError = it.message ?: "网络错误" }
+            )
+            accountPreparing = false
+        }
+    }
+
+    // 一键登录失败兜底；返回 true = 已处理，不再弹通用「登录失败」
+    fun handleOneTapLoginFailure(error: Throwable): Boolean {
+        if (!oneTap) return false
+        val msg = error.message.orEmpty()
+        val fields = (error as? ApiError)?.fields.orEmpty()
+        val deviceUsername = fields["deviceUsername"]
+        return when {
+            msg.contains("密码错误") -> {
+                showPasswordPrompt = true
+                true
+            }
+            msg.contains("账号不存在") -> {
+                AutoAccountManager.clearAccount(context)
+                username = ""
+                Toast.makeText(context, "原账号已不存在，正在为本机重新生成账号", Toast.LENGTH_LONG).show()
+                prepareAccount()
+                true
+            }
+            fields["code"] == "DEVICE_MISMATCH" && !deviceUsername.isNullOrBlank() -> {
+                AutoAccountManager.saveAccount(context, deviceUsername)
+                username = deviceUsername
+                password = AutoAccountManager.DEFAULT_PASSWORD
+                errorDialog = "$msg\n\n已切换为本机账号，请再点一次「一键登录」"
+                true
+            }
+            else -> false
+        }
+    }
+
     // ⭐ 手表/小屏适配：屏高 < 500dp（典型手表 300~450dp）时压缩顶部留白与 Logo，
     //   保证账号/密码/登录按钮不用滚太远就能看到
     val isSmallScreen = LocalConfiguration.current.screenHeightDp < 500
@@ -97,7 +149,10 @@ fun LoginScreen(
         val savedPassword = prefs.getString("password", "") ?: ""
         val savedRemember = prefs.getBoolean("remember", false)
         
-        if (savedRemember && savedUsername.isNotEmpty()) {
+        if (oneTap) {
+            rememberPassword = true
+            prepareAccount()
+        } else if (savedRemember && savedUsername.isNotEmpty()) {
             username = savedUsername
             password = savedPassword
             rememberPassword = true
@@ -142,7 +197,12 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(if (isSmallScreen) 14.dp else 50.dp))
             
             // 登录表单卡片
-            Card(
+            if (oneTap) SrtAccountCard(
+                username = username,
+                preparing = accountPreparing,
+                error = accountError,
+                onRetry = { prepareAccount() }
+            ) else Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White)
@@ -496,7 +556,9 @@ fun LoginScreen(
                                 onFailure = { error ->
                                     isLoading = false
                                     // §68 服务端失败原因改弹框（设备不匹配时含本机对应账号）
-                                    errorDialog = error.message ?: "登录失败"
+                                    if (!handleOneTapLoginFailure(error)) {
+                                        errorDialog = error.message ?: "登录失败"
+                                    }
                                 }
                             )
                         } catch (e: Exception) {
@@ -509,7 +571,7 @@ fun LoginScreen(
             Button(
                 onClick = {
                     if (username.isBlank() || password.isBlank()) {
-                        errorMessage = "请输入账号和密码"
+                        errorMessage = if (oneTap) "账号尚未生成，请稍候或点「重试」" else "请输入账号和密码"
                         return@Button
                     }
                     // ⭐ §130 登录前查推流要用的权限：没开就先弹引导（必需项开齐才放行，建议项可跳过）
@@ -522,7 +584,7 @@ fun LoginScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(50.dp),
-                enabled = !isLoading,
+                enabled = !isLoading && !accountPreparing,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF65AEF7)
                 ),
@@ -536,7 +598,7 @@ fun LoginScreen(
                     )
                 } else {
                     Text(
-                        text = "登录",
+                        text = if (oneTap) "一键登录" else "登录",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -554,10 +616,22 @@ fun LoginScreen(
                 )
             }
 
+            if (showPasswordPrompt) {
+                SrtPasswordPromptDialog(
+                    username = username,
+                    onConfirm = {
+                        showPasswordPrompt = false
+                        password = it
+                        performLogin()
+                    },
+                    onDismiss = { showPasswordPrompt = false }
+                )
+            }
+
             Spacer(modifier = Modifier.height(20.dp))
             
-            // 注册入口
-            Row(
+            // 注册入口（srtapp 自动注册，不显示）
+            if (!oneTap) Row(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {

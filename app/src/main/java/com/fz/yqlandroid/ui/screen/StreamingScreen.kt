@@ -597,8 +597,10 @@ fun StreamingScreen(
                     
                     Spacer(modifier = Modifier.weight(1f))
                     
-                    // 右 - 我的
-                    IconButton(
+                    // 右 - 我的（srtapp 不开放：账号自动生成，客户不能改密码/注销）
+                    if (com.fz.yqlandroid.manager.AutoAccountManager.isEnabled(context)) {
+                        Spacer(modifier = Modifier.size(28.dp))
+                    } else IconButton(
                         onClick = onNavigateToProfile,
                         modifier = Modifier.size(28.dp)
                     ) {

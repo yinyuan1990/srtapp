@@ -80,12 +80,12 @@ object NetworkService {
                 } else {
                     val msg = parseErrorMessage(body) ?: "登录失败"
                     println("jfh [Login] ❌ token为空: $msg")
-                    Result.failure(Exception(msg))
+                    Result.failure(ApiError(msg, parseErrorFields(body)))
                 }
             } else {
                 val msg = parseErrorMessage(body) ?: "请求失败: ${response.code}"
                 println("jfh [Login] ❌ HTTP${response.code}: $msg")
-                Result.failure(Exception(msg))
+                Result.failure(ApiError(msg, parseErrorFields(body)))
             }
         } catch (e: Exception) {
             println("jfh [Login] ❌ 异常: ${e.message}")
@@ -151,12 +151,12 @@ object NetworkService {
                 } else {
                     val msg = parseErrorMessage(body) ?: "注册失败"
                     println("jfh [Register] ❌ 失败: $msg")
-                    Result.failure(Exception(msg))
+                    Result.failure(ApiError(msg, parseErrorFields(body)))
                 }
             } else {
                 val msg = parseErrorMessage(body) ?: "请求失败: ${response.code}"
                 println("jfh [Register] ❌ HTTP${response.code}: $msg")
-                Result.failure(Exception(msg))
+                Result.failure(ApiError(msg, parseErrorFields(body)))
             }
         } catch (e: Exception) {
             println("jfh [Register] ❌ 异常: ${e.message}")
@@ -824,7 +824,19 @@ object NetworkService {
             }
         } catch (_: Exception) { null }
     }
+
+    /** 错误体里的顶层字段（code / existingUsername / deviceUsername 等），随 ApiError 交给调用方 */
+    private fun parseErrorFields(body: String?): Map<String, String> {
+        if (body.isNullOrEmpty()) return emptyMap()
+        return try {
+            val obj = gson.fromJson(body, com.google.gson.JsonObject::class.java) ?: return emptyMap()
+            obj.entrySet().filter { it.value.isJsonPrimitive }.associate { it.key to it.value.asString }
+        } catch (_: Exception) { emptyMap() }
+    }
 }
+
+/** 接口失败：message 与原来一致（老调用方无感），fields 为后端错误体的附加字段 */
+class ApiError(message: String, val fields: Map<String, String> = emptyMap()) : Exception(message)
 
 // ========== 请求/响应数据类 ==========
 
