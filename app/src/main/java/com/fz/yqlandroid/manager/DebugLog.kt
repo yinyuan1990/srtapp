@@ -38,8 +38,14 @@ object DebugLog {
     private val WS_KEEP = listOf("WebSocket已连接", "已关闭", "连接失败", "手动断开", "STOMP已连接")
     private val SRT_KEEP = listOf(
         "已连接 ", "断线", "连接失败", "没有帧送来", "停止发送", "主动重连", "帧恢复送来",
-        "采集启动", "采集已停止", "重开摄像头", "摄像头:", "库加载失败"
+        "采集启动", "采集已停止", "重开摄像头", "摄像头", "会话", "替身", "库加载失败", "换编码器", "首个关键帧"
     )
+    /** 每秒一条的统计 / 每 5s 一条的曝光只抽样 */
+    private const val STATS_EVERY_MS = 15_000L
+    private const val CAM_EVERY_MS = 30_000L
+    private const val STATS_LINE_CHARS = 260
+    @Volatile private var lastStatsMs = 0L
+    @Volatile private var lastCamMs = 0L
 
     /** threadtime 格式：MM-dd HH:mm:ss.SSS pid tid L tag: msg */
     private val LOGCAT_LINE = Regex("""^\d\d-\d\d (\d\d:\d\d:\d\d)\.\d+\s+\d+\s+\d+\s+([VDIWEF])\s+(.+?)\s*: (.*)$""")
@@ -155,6 +161,13 @@ object DebugLog {
     private fun filter(raw: String): String? {
         val m = LOGCAT_LINE.matchEntire(raw) ?: return null
         val (time, level, tag, msg) = m.destructured
+        if (msg.contains("[SRT直推] 统计") || msg.contains("[SRT直推] cam exp")) {
+            val stats = msg.contains("统计")
+            val nowMs = SystemClock.elapsedRealtime()
+            if (nowMs - (if (stats) lastStatsMs else lastCamMs) < (if (stats) STATS_EVERY_MS else CAM_EVERY_MS)) return null
+            if (stats) lastStatsMs = nowMs else lastCamMs = nowMs
+            return "$time ${msg.substringAfter("[SRT直推] ")}".take(STATS_LINE_CHARS)
+        }
         val keep = when {
             tag == TAG -> true
             tag == "AndroidRuntime" -> level == "E"
