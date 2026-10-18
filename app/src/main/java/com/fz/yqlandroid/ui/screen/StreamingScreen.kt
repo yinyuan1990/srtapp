@@ -1077,6 +1077,9 @@ fun StreamingScreen(
                 }
             }
         }
+
+        // 横屏封面转正后铺满竖屏，画在推流页最上层，盖住预览和操作栏。
+        HealthHomeCover()
     }
 }
 

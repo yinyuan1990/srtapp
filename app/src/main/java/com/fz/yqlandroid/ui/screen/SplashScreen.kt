@@ -22,33 +22,32 @@ import com.fz.yqlandroid.R
 import kotlinx.coroutines.delay
 
 /**
- * 启动页：中性品牌（青色底 + 广播图标 + 应用名）。
- * 已去掉金凤凰元素（原来是全屏 splash.jpg）。1 秒后跳转登录。
+ * 启动页：应用图标 + 应用名。1 秒后进入开始运动页，不直接登录。
  */
 @Composable
 fun SplashScreen(
-    onNavigateToLogin: () -> Unit
+    onFinished: () -> Unit
 ) {
     LaunchedEffect(Unit) {
         delay(1000)
-        onNavigateToLogin()
+        onFinished()
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF00838F)),
+            .background(Color.White),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Image(
-                painter = painterResource(id = R.drawable.ic_launcher_foreground),
+                painter = painterResource(id = R.mipmap.app_icon),
                 contentDescription = null,
                 modifier = Modifier.size(140.dp)
             )
             Text(
                 text = stringResource(id = R.string.app_name),
-                color = Color.White,
+                color = Color(0xFF1D1D1F),
                 fontSize = 24.sp,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(top = 8.dp)
