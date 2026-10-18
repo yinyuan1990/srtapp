@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -185,13 +186,14 @@ fun LoginScreen(
         ) {
             Spacer(modifier = Modifier.height(if (isSmallScreen) 12.dp else 60.dp))
             
-            // Logo
+            // Logo（mipmap/ic_launcher 是 adaptive-icon，painterResource 加载会崩 → 用底色 + 矢量前景拼）
             Image(
-                painter = painterResource(id = R.mipmap.ic_launcher),
+                painter = painterResource(id = R.drawable.ic_launcher_foreground),
                 contentDescription = "Logo",
                 modifier = Modifier
                     .size(if (isSmallScreen) 52.dp else 94.dp)
                     .clip(RoundedCornerShape(9.dp))
+                    .background(colorResource(id = R.color.ic_launcher_background))
             )
             
             Spacer(modifier = Modifier.height(if (isSmallScreen) 14.dp else 50.dp))
