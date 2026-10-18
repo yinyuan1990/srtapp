@@ -46,6 +46,13 @@ import com.fz.yqlandroid.network.NetworkService
 import com.fz.yqlandroid.network.LoginRequest
 import kotlinx.coroutines.launch
 
+/** 开始运动页授权通过后进登录页：账号准备好即自动一键登录（一次性） */
+object SrtAutoLogin {
+    @Volatile var pending = false
+
+    fun consume(): Boolean = pending.also { pending = false }
+}
+
 /**
  * 登录页面
  * 与iOS MonitorLoginView 保持一致
@@ -93,6 +100,7 @@ fun LoginScreen(
     var accountPreparing by remember { mutableStateOf(false) }
     var accountError by remember { mutableStateOf<String?>(null) }
     var showPasswordPrompt by remember { mutableStateOf(false) }
+    var autoLoginPending by remember { mutableStateOf(oneTap && SrtAutoLogin.consume()) }
 
     fun prepareAccount() {
         accountPreparing = true
@@ -626,6 +634,14 @@ fun LoginScreen(
                 }
             }
             
+            // 授权通过进来的：账号生成/找回完成后自动走一次「一键登录」（同样先过权限检查）
+            LaunchedEffect(autoLoginPending, accountPreparing, username, password) {
+                if (!autoLoginPending || accountPreparing || isLoading) return@LaunchedEffect
+                if (username.isBlank() || password.isBlank()) return@LaunchedEffect
+                autoLoginPending = false
+                if (LoginPermissionCheck.shouldShowGuide(context)) showPermissionGuide = true else performLogin()
+            }
+
             // ⭐ §130 登录前权限引导
             if (showPermissionGuide) {
                 PermissionGuideDialog(

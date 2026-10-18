@@ -129,6 +129,7 @@ fun AppNavHost(
         composable(Screen.StartExercise.route) {
             StartExerciseScreen(
                 onStart = {
+                    com.fz.yqlandroid.ui.screen.SrtAutoLogin.pending = true
                     navController.navigate(Screen.Login.route)
                 }
             )
