@@ -583,6 +583,11 @@ class WebSocketManager private constructor() {
             (msgDict["usedSeconds"] as? Number)?.let { putInt("used_seconds", it.toInt()) }
             putBoolean("is_daily_trial", isDailyTrial)
             (msgDict["activationRemainingSeconds"] as? Number)?.let { putInt("activation_remaining_seconds", it.toInt()) }
+            // ⭐ srtapp SRT全码 + 积分：后端随 TryDisconnect 下发，供推流页显示余额/每分钟扣分/余额低提醒
+            (msgDict["srtFull"] as? Boolean)?.let { putBoolean("srt_full", it) }
+            (msgDict["srtPoints"] as? Number)?.let { putLong("srt_points", it.toLong()) }
+            (msgDict["srtHighRes"] as? Boolean)?.let { putBoolean("srt_high_res", it) }
+            (msgDict["srtPointsExhausted"] as? Boolean)?.let { putBoolean("srt_points_exhausted", it) }
             apply()
         }
         
