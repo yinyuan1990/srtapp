@@ -51,8 +51,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
-private const val DISPLAY_LINES = 3000
-private const val COPY_MAX_CHARS = 150_000
+/** 微信单条消息放得下 */
+private const val COPY_MAX_CHARS = 3000
 
 /**
  * 悬浮窗开关：登录页连点 Logo 5 次切换，持久化。
@@ -129,16 +129,12 @@ fun DebugLogOverlay() {
 private fun DebugLogPanel(onClose: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var keyOnly by remember { mutableStateOf(true) }
     var refresh by remember { mutableIntStateOf(0) }
     var lines by remember { mutableStateOf<List<String>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(keyOnly, refresh) {
-        loading = true
-        lines = withContext(Dispatchers.IO) { DebugLog.readLines(keyOnly, DISPLAY_LINES) }
-        loading = false
+    LaunchedEffect(refresh) {
+        lines = collapseRepeats(DebugLog.recentLines())
         if (lines.isNotEmpty()) listState.scrollToItem(lines.size - 1)
     }
 
@@ -155,11 +151,10 @@ private fun DebugLogPanel(onClose: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                PanelButton(if (keyOnly) "关键" else "全部") { keyOnly = !keyOnly }
                 PanelButton("刷新") { refresh++ }
                 PanelButton("复制") {
                     scope.launch {
-                        val text = withContext(Dispatchers.IO) { buildCopyText(lines) }
+                        val text = withContext(Dispatchers.IO) { buildCopyText(DebugLog.readLines()) }
                         copyToClipboard(context, text)
                     }
                 }
@@ -172,7 +167,7 @@ private fun DebugLogPanel(onClose: () -> Unit) {
                 PanelButton("关闭", onClose)
             }
             Text(
-                text = if (loading) "读取中…" else "${if (keyOnly) "关键" else "全部"}日志 ${lines.size} 行（最多显示 $DISPLAY_LINES 行）",
+                text = "${lines.size} 行；复制取最新 $COPY_MAX_CHARS 字以内",
                 color = Color(0xFF999999),
                 fontSize = 11.sp,
                 modifier = Modifier.padding(horizontal = 8.dp)
@@ -203,22 +198,49 @@ private fun PanelButton(text: String, onClick: () -> Unit) {
 }
 
 private fun lineColor(line: String): Color = when {
-    line.contains("⚠️") || line.contains(" W ") || line.contains(" E ") || line.contains("❌") -> Color(0xFFFFB74D)
-    line.contains(DebugLog.TAG) -> Color(0xFF81C784)
+    line.contains("⚠️") || line.contains("❌") || line.contains("断") || line.contains("失败") -> Color(0xFFFFB74D)
     line.startsWith("====") -> Color(0xFF65AEF7)
     else -> Color(0xFFDDDDDD)
 }
 
-/** 当前状态快照放最前，正文超长时保留最新部分（剪贴板放太大会失败） */
+/** 连续内容相同（去掉开头时间）的行合并成一行并标次数，如 WS 每 5s 重连失败 */
+internal fun collapseRepeats(lines: List<String>): List<String> {
+    val out = ArrayList<String>()
+    var prevBody: String? = null
+    var count = 0
+    var firstLine = ""
+    var lastTime = ""
+    fun flush() {
+        if (prevBody != null) out.add(if (count > 1) "$firstLine (×$count 至$lastTime)" else firstLine)
+    }
+    for (line in lines) {
+        val body = line.substringAfter(' ', line)
+        if (body == prevBody) {
+            count++
+            lastTime = line.substringBefore(' ')
+        } else {
+            flush()
+            prevBody = body
+            count = 1
+            firstLine = line
+            lastTime = line.substringBefore(' ')
+        }
+    }
+    flush()
+    return out
+}
+
+/** 设备状态放最前，正文取最新的、合并重复后总长不超过微信单条上限 */
 internal fun buildCopyText(lines: List<String>): String {
     val header = try { DebugLog.snapshot() } catch (_: Exception) { "" }
-    var start = lines.size
-    var total = 0
-    while (start > 0 && total + lines[start - 1].length + 1 <= COPY_MAX_CHARS) {
+    val body = collapseRepeats(lines)
+    var start = body.size
+    var total = header.length + 1
+    while (start > 0 && total + body[start - 1].length + 1 <= COPY_MAX_CHARS) {
         start--
-        total += lines[start].length + 1
+        total += body[start].length + 1
     }
-    return header + "\n\n" + lines.subList(start, lines.size).joinToString("\n")
+    return header + "\n" + body.subList(start, body.size).joinToString("\n")
 }
 
 internal fun copyToClipboard(context: Context, text: String) {

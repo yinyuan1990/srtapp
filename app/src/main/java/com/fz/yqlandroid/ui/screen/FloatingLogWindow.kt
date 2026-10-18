@@ -40,8 +40,6 @@ object FloatingLogWindow {
     private var panel: View? = null
     private var logText: TextView? = null
     private var logScroll: ScrollView? = null
-    private var modeButton: TextView? = null
-    private var keyOnly = true
 
     fun canDraw(context: Context) =
         Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(context)
@@ -73,7 +71,6 @@ object FloatingLogWindow {
         panel = null
         logText = null
         logScroll = null
-        modeButton = null
     }
 
     private fun overlayType() =
@@ -156,13 +153,8 @@ object FloatingLogWindow {
             setTextIsSelectable(false)
         }
         val scroll = ScrollView(context).apply { addView(text) }
-        val mode = button("关键") {
-            keyOnly = !keyOnly
-            refreshNow(forceBottom = true)
-        }
         val bar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(mode)
             addView(button("复制") { copyAll(context) })
             addView(button("清空") {
                 thread { DebugLog.clear(); main.post { refreshNow(forceBottom = true) } }
@@ -193,7 +185,6 @@ object FloatingLogWindow {
             panel = root
             logText = text
             logScroll = scroll
-            modeButton = mode
             refreshNow(forceBottom = true)
         } catch (e: Exception) {
             Log.w(DebugLog.TAG, "[诊断] 打开日志面板失败: ${e.message}")
@@ -207,7 +198,6 @@ object FloatingLogWindow {
         panel = null
         logText = null
         logScroll = null
-        modeButton = null
         bubble?.visibility = View.VISIBLE
     }
 
@@ -217,17 +207,15 @@ object FloatingLogWindow {
         main.removeCallbacks(refreshTask)
         val text = logText ?: return
         val scroll = logScroll ?: return
-        modeButton?.text = if (keyOnly) "关键" else "全部"
         val atBottom = scroll.getChildAt(0)?.let { scroll.scrollY + scroll.height >= it.height - 40 } ?: true
-        text.text = DebugLog.recentLines(keyOnly).joinToString("\n")
+        text.text = collapseRepeats(DebugLog.recentLines()).joinToString("\n")
         if (forceBottom || atBottom) scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
         main.postDelayed(refreshTask, REFRESH_MS)
     }
 
     private fun copyAll(context: Context) {
-        val mode = keyOnly
         thread {
-            val text = buildCopyText(DebugLog.readLines(mode, 3000))
+            val text = buildCopyText(DebugLog.readLines())
             main.post { copyToClipboard(context, text) }
         }
     }
