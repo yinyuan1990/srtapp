@@ -713,7 +713,11 @@ class WebSocketManager private constructor() {
             "remainingSeconds" to remainingSeconds,
             "usedSeconds" to usedSeconds,
             "isDailyTrial" to isDailyTrial,
-            "activationRemainingSeconds" to activationRemainingSeconds
+            "activationRemainingSeconds" to activationRemainingSeconds,
+            // ⭐ srtapp SRT全码/积分：从 prefs（后端 TryDisconnect 下发时存入）回填进 state，
+            //   随 CONFIG_STATE 透传给 PC，PC applySrtAccount(state) 读 srtFull/srtPoints
+            "srtFull" to (tokenPrefs?.getBoolean("srt_full", false) ?: false),
+            "srtPoints" to (tokenPrefs?.getLong("srt_points", 0L) ?: 0L)
         )
         
         val payload = mapOf(
