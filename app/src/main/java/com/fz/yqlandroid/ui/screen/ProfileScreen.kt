@@ -718,7 +718,7 @@ internal fun ReferralActivityDialog(
                     // ⭐ §95：会员 / 非会员头部文案分开（逻辑不动）
                     Text(
                         if (isMember)
-                            "在未开通账号的推荐人入口中\n输入自己的金凤凰账号即可完成奖励"
+                            "在未开通账号的推荐人入口中\n输入自己的账号即可完成奖励"
                         else
                             "填写推荐人账号即可领取日卡一张",
                         fontSize = 16.sp, fontWeight = FontWeight.Bold,
@@ -730,8 +730,8 @@ internal fun ReferralActivityDialog(
                             OutlinedTextField(
                                 value = inviterInput,
                                 onValueChange = { inviterInput = it; error = null },
-                                label = { Text("推荐人的金凤凰账号前8位或完整账号") },
-                                placeholder = { Text("推荐人的金凤凰账号前8位或完整账号") },
+                                label = { Text("推荐人的账号前8位或完整账号") },
+                                placeholder = { Text("推荐人的账号前8位或完整账号") },
                                 singleLine = true,
                                 enabled = !busy,
                                 modifier = Modifier.fillMaxWidth()
@@ -753,7 +753,7 @@ internal fun ReferralActivityDialog(
                             Button(
                                 onClick = {
                                     val input = inviterInput.trim()
-                                    if (input.isEmpty()) { error = "请输入推荐人的金凤凰账号前8位或完整账号"; return@Button }
+                                    if (input.isEmpty()) { error = "请输入推荐人的账号前8位或完整账号"; return@Button }
                                     busy = true
                                     error = null
                                     scope.launch {
