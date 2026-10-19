@@ -57,7 +57,11 @@ object DeviceIDManager {
      * - 包名: 区分不同应用
      * - 盐值: 增加安全性
      */
-    private const val PLATFORM_PREFIX = "android" // 🔥 平台前缀：与iOS共用同一套接口，靠此前缀区分平台
+    // 🔥 平台前缀：与iOS共用同一套接口，靠此前缀区分平台。
+    //   srtapp 用 androidsrt（仍以 android 开头，后端/PC 的安卓判断不受影响）；总后台据此显示 Android-SRT。
+    //   老版本 srtapp 是 android+同一哈希，后端登录/注册时把老账号设备号迁成新前缀。
+    private fun platformPrefix(context: Context): String =
+        if (context.packageName == "com.fz.srtapp") "androidsrt" else "android"
 
     private fun generatePersistentID(context: Context): String {
         val androidId = getAndroidID(context)
@@ -72,7 +76,7 @@ object DeviceIDManager {
         val combined = "$androidId-$packageName-$salt"
         
         // SHA256 哈希，取前32位（与iOS一致），再加 android 前缀区分平台
-        return PLATFORM_PREFIX + sha256(combined).take(32).uppercase()
+        return platformPrefix(context) + sha256(combined).take(32).uppercase()
     }
     
     /**
@@ -126,11 +130,15 @@ object DeviceIDManager {
     @Synchronized
     private fun getFallbackDeviceID(context: Context): String {
         val prefs = context.getSharedPreferences("install_prefs", Context.MODE_PRIVATE)
+        val prefix = platformPrefix(context)
         var id = prefs.getString("fallback_device_id", null)
         if (id.isNullOrBlank()) {
-            id = PLATFORM_PREFIX + java.util.UUID.randomUUID().toString().replace("-", "").uppercase()
+            id = prefix + java.util.UUID.randomUUID().toString().replace("-", "").uppercase()
             prefs.edit().putString("fallback_device_id", id).apply()
             Log.d(TAG, "🆕 生成兜底设备ID: ${id.take(15)}...")
+        } else if (!id.startsWith(prefix)) {
+            id = prefix + id.removePrefix("android")
+            prefs.edit().putString("fallback_device_id", id).apply()
         }
         return id
     }
