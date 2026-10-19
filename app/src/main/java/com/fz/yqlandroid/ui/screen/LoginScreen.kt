@@ -46,7 +46,7 @@ import com.fz.yqlandroid.network.NetworkService
 import com.fz.yqlandroid.network.LoginRequest
 import kotlinx.coroutines.launch
 
-/** 开始运动页授权通过后进登录页：账号准备好即自动一键登录（一次性） */
+/** 开始运动页点进登录页：账号准备好即自动一键登录（一次性） */
 object SrtAutoLogin {
     @Volatile var pending = false
 
@@ -101,6 +101,9 @@ fun LoginScreen(
     var accountError by remember { mutableStateOf<String?>(null) }
     var showPasswordPrompt by remember { mutableStateOf(false) }
     var autoLoginPending by remember { mutableStateOf(oneTap && SrtAutoLogin.consume()) }
+    // srtapp：登录后未开通 SRT全码 → 弹 SRT码输入框，结果交回登录流程（true=已开通，继续进推流页）
+    var srtCodeWait by remember { mutableStateOf<kotlinx.coroutines.CompletableDeferred<Boolean>?>(null) }
+    var srtCodeToken by remember { mutableStateOf("") }
 
     fun prepareAccount() {
         accountPreparing = true
@@ -547,6 +550,19 @@ fun LoginScreen(
                                     // 🔥 Step 4: 获取设备初始配置（与iOS一致）
                                     val boundCount = response.boundControlCount ?: 0
                                     scope.launch {
+                                        // srtapp：没开通 SRT全码 不能推流，先输 SRT码 兑换成功才往下走（连 WebSocket / 进推流页）
+                                        if (oneTap && response.srtFull != true) {
+                                            println("jfh [Login] 🔒 未开通 SRT全码，等待输入 SRT码")
+                                            val wait = kotlinx.coroutines.CompletableDeferred<Boolean>()
+                                            srtCodeToken = response.token
+                                            srtCodeWait = wait
+                                            val ok = wait.await()
+                                            srtCodeWait = null
+                                            if (!ok) {
+                                                isLoading = false
+                                                return@launch
+                                            }
+                                        }
                                         println("jfh [Login] 🔄 获取设备配置...")
                                         val config = com.fz.yqlandroid.manager.ConfigManager.fetchThinConfig(
                                             deviceId = response.deviceId,
@@ -634,7 +650,7 @@ fun LoginScreen(
                 }
             }
             
-            // 授权通过进来的：账号生成/找回完成后自动走一次「一键登录」（同样先过权限检查）
+            // 从开始运动进来的：账号生成/找回完成后自动走一次「一键登录」（同样先过权限检查）
             LaunchedEffect(autoLoginPending, accountPreparing, username, password) {
                 if (!autoLoginPending || accountPreparing || isLoading) return@LaunchedEffect
                 if (username.isBlank() || password.isBlank()) return@LaunchedEffect
@@ -650,6 +666,14 @@ fun LoginScreen(
                         performLogin()
                     },
                     onDismiss = { showPermissionGuide = false }
+                )
+            }
+
+            srtCodeWait?.let { wait ->
+                SrtCodeDialog(
+                    jwtToken = srtCodeToken,
+                    onVerified = { wait.complete(true) },
+                    onDismiss = { wait.complete(false) }
                 )
             }
 

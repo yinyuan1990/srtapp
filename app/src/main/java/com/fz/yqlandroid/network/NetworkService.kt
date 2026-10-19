@@ -811,6 +811,34 @@ object NetworkService {
         }
     }
 
+    /**
+     * 输码激活（srtapp 用来兑换 SRT码）
+     * POST /activation/activate  body: { code }
+     */
+    suspend fun activateCode(code: String, jwtToken: String): Result<ActivateResponse> = withContext(Dispatchers.IO) {
+        try {
+            val url = APIConfig.fullURL(APIConfig.Activation.ACTIVATE)
+            val json = gson.toJson(mapOf("code" to code))
+            val httpRequest = Request.Builder()
+                .url(url).post(json.toRequestBody(JSON_MEDIA_TYPE))
+                .apply {
+                    APIConfig.defaultHeaders.forEach { (k, v) -> addHeader(k, v) }
+                    if (jwtToken.isNotEmpty()) addHeader("Authorization", "Bearer $jwtToken")
+                }
+                .build()
+            val response = client.newCall(httpRequest).execute()
+            val body = response.body?.string()
+            println("jfh [Activate] Status=${response.code}, Body=$body")
+            if (response.isSuccessful && body != null) {
+                Result.success(gson.fromJson(body, ActivateResponse::class.java))
+            } else {
+                Result.failure(Exception(parseErrorMessage(body) ?: "激活失败: ${response.code}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     // ========== 工具方法 ==========
     
     /**
@@ -904,7 +932,19 @@ data class LoginResponse(
     // ⭐ §134 SRT直推：MediaMTX 节点 {host, port}（推/拉同一台）+ 编码参数 srtParams（结构见 SrtDirectParams）。
     //   老后端缺省 null → 节点用内置 118.178.33.144:8890，参数用内置默认。
     val srtServer: SrtServer? = null,
-    val srtParams: com.google.gson.JsonElement? = null
+    val srtParams: com.google.gson.JsonElement? = null,
+    // srtapp：SRT全码是否有效（没开通不能推流，登录后先输 SRT码）
+    val srtFull: Boolean? = null,
+    val srtFullExpireAt: String? = null,
+    val srtPoints: Long? = null
+)
+
+/** 输码激活结果（/activation/activate）；SRT码 成功时 srtFull=true */
+data class ActivateResponse(
+    val success: Boolean? = null,
+    val message: String? = null,
+    val srtFull: Boolean? = null,
+    val srtFullExpireAt: String? = null
 )
 
 // ⭐ §134 SRT直推节点

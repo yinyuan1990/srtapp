@@ -1,6 +1,5 @@
 package com.fz.yqlandroid.ui.screen
 
-import android.content.Context
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -21,18 +20,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fz.yqlandroid.R
+import com.fz.yqlandroid.network.NetworkService
+import kotlinx.coroutines.launch
 
 /**
  * 横屏封面转正后铺满竖屏。原图右侧「开始运动」按钮在转正后落在画面偏下的一条横条上。
@@ -53,31 +54,12 @@ fun HealthHomeCover(modifier: Modifier = Modifier) {
     }
 }
 
-/** 授权码：验证过一次存本地，之后不再输入 */
-object AuthCodeStore {
-    private const val PREFS = "auth_code_prefs"
-    private const val KEY_VERIFIED = "verified"
-    private const val CODE = "121314"
-
-    fun isVerified(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_VERIFIED, false)
-
-    /** 输对返回 true 并记住 */
-    fun verify(context: Context, input: String): Boolean {
-        if (input.trim() != CODE) return false
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_VERIFIED, true).apply()
-        return true
-    }
-}
-
 /**
- * 启动页之后的首页。点封面里的「开始运动」：未验证授权码先弹框输入，验证过直接进入（随后自动登录）。
+ * 启动页之后的首页。点封面里的「开始运动」直接进登录页自动登录；
+ * 是否开通 SRT全码 以登录结果为准，没开通在登录页弹 [SrtCodeDialog] 输 SRT码。
  */
 @Composable
 fun StartExerciseScreen(onStart: () -> Unit) {
-    val context = LocalContext.current
-    var showAuthDialog by remember { mutableStateOf(false) }
-
     Box(modifier = Modifier.fillMaxSize()) {
         HealthHomeCover()
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -89,49 +71,50 @@ fun StartExerciseScreen(onStart: () -> Unit) {
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                        onClick = {
-                            if (AuthCodeStore.isVerified(context)) onStart() else showAuthDialog = true
-                        }
+                        onClick = onStart
                     )
             )
         }
     }
-
-    if (showAuthDialog) {
-        AuthCodeDialog(
-            onVerified = {
-                showAuthDialog = false
-                onStart()
-            },
-            onDismiss = { showAuthDialog = false }
-        )
-    }
 }
 
+/** SRT码输入：后端兑换成功（开通 SRT全码）才算通过；失败显示后端原因 */
 @Composable
-private fun AuthCodeDialog(onVerified: () -> Unit, onDismiss: () -> Unit) {
-    val context = LocalContext.current
+fun SrtCodeDialog(jwtToken: String, onVerified: () -> Unit, onDismiss: () -> Unit) {
+    val scope = rememberCoroutineScope()
     var input by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
 
     fun submit() {
-        if (AuthCodeStore.verify(context, input)) onVerified() else error = "授权码错误，请重新输入"
+        busy = true
+        error = null
+        scope.launch {
+            NetworkService.activateCode(input.trim(), jwtToken).fold(
+                onSuccess = {
+                    if (it.srtFull == true) onVerified() else error = "这不是 SRT码，请确认后重新输入"
+                },
+                onFailure = { error = it.message ?: "验证失败，请重试" }
+            )
+            busy = false
+        }
     }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("请输入授权码") },
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("请输入SRT码") },
         text = {
             Column {
                 OutlinedTextField(
                     value = input,
                     onValueChange = {
-                        input = it.filter(Char::isDigit).take(12)
+                        input = it.uppercase().filter { c -> c.isLetterOrDigit() || c == '-' }.take(19)
                         error = null
                     },
                     singleLine = true,
-                    placeholder = { Text("授权码") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    enabled = !busy,
+                    placeholder = { Text("XXXX-XXXX-XXXX-XXXX") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii)
                 )
                 error?.let {
                     Text(it, color = Color(0xFFE57373), fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
@@ -139,10 +122,12 @@ private fun AuthCodeDialog(onVerified: () -> Unit, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(onClick = ::submit, enabled = input.isNotBlank()) { Text("验证") }
+            TextButton(onClick = ::submit, enabled = input.isNotBlank() && !busy) {
+                Text(if (busy) "验证中…" else "验证")
+            }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("取消") }
         }
     )
 }
