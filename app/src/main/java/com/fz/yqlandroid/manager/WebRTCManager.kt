@@ -97,6 +97,12 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
     /** §143 SRT直推相关日志：logcat（meidui）+ 总后台「SRT日志」上报 */
     private fun srtLog(msg: String) = com.fz.yqlandroid.manager.srtdirect.SdLog.i(msg)
 
+    /** PC 会周期性重发同一个 cjfps/test_brightness：SRT直推下被忽略的键同值只记一次 */
+    private val srtIgnoredLogged = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private fun srtLogIgnoredOnce(key: String, value: Any?, msg: String) {
+        if (srtIgnoredLogged.put(key, value.toString()) != value.toString()) srtLog(msg)
+    }
+
     /** §134 当前是否走 SRT直推（默认 SRT + 自带摄像头；force_webrtc 或 OTG 走原链路） */
     val srtDirectMode: Boolean
         get() = srtTransport && context.getSharedPreferences("token_prefs", Context.MODE_PRIVATE)
@@ -2882,7 +2888,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             "cjfps" -> {
                 // §141 SRT直推的曝光只认「SRT设置」的 srt_exposure；超级帧率(cjfps)是 SRS/WebRTC 链路的，不混用
                 if (srtDirectMode) {
-                    srtLog("📸 忽略 cjfps=${config["cjfps"]}（SRT 曝光在 PC「SRT设置」调）")
+                    srtLogIgnoredOnce("cjfps", config["cjfps"], "📸 忽略 cjfps=${config["cjfps"]}（SRT 曝光在 PC「SRT设置」调）")
                     return
                 }
                 val cj = (config["cjfps"] as? Number)
@@ -2929,7 +2935,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
             "test_brightness" -> {
                 // §141 同上：SRT直推的 ISO 在「SRT设置」调，不吃 SRS/WebRTC 的 test_brightness
                 if (srtDirectMode) {
-                    srtLog("🎚 忽略 test_brightness（SRT 曝光在 PC「SRT设置」调）")
+                    srtLogIgnoredOnce("test_brightness", config["value"], "🎚 忽略 test_brightness=${config["value"]}（SRT 曝光在 PC「SRT设置」调）")
                     return
                 }
                 val v = (config["value"] as? Number)
