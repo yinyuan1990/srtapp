@@ -92,7 +92,7 @@ fun SrtCodeDialog(jwtToken: String, onVerified: () -> Unit, onDismiss: () -> Uni
         scope.launch {
             NetworkService.activateCode(input.trim(), jwtToken).fold(
                 onSuccess = {
-                    if (it.srtFull == true) onVerified() else error = "这不是 SRT码，请确认后重新输入"
+                    if (it.srtFull == true) onVerified() else error = "这不是原画码，请确认后重新输入"
                 },
                 onFailure = { error = it.message ?: "验证失败，请重试" }
             )
@@ -102,7 +102,7 @@ fun SrtCodeDialog(jwtToken: String, onVerified: () -> Unit, onDismiss: () -> Uni
 
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text("请输入SRT码") },
+        title = { Text("请输入原画码") },
         text = {
             Column {
                 OutlinedTextField(
