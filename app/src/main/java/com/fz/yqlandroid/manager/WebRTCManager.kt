@@ -68,6 +68,12 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
          *  随 CONFIG_STATE.profile 上报，后端按该档位每小时消耗按分钟扣流量 */
         @Volatile var effectiveSrtProfile: String = ""
 
+        /** 当前档位键（low/standard/high/ultra/p4k/p1440/srt2k/srt4k，任何模式），随 CONFIG_STATE.curType 上报，PC 档位显示跟它走 */
+        @Volatile var currentTypeKey: String = "low"
+
+        /** 没有 PC 在线（收不到 PC_PRESENCE）这么久 → 切回超低网，网差时先保证出画面 */
+        private const val NO_PC_LOW_AFTER_MS = 20_000L
+
         /** §131/§132 本版默认 SRT；token_prefs.force_webrtc=true 才回原 WebRTC（无界面回退开关） */
         fun isSrtTransport(context: Context): Boolean =
             !context.getSharedPreferences("token_prefs", Context.MODE_PRIVATE)
@@ -171,8 +177,11 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         private set
     
     // 🔥 档位配置（动态计算，前后置分别设置）
-    var currentProfile: LadderProfile = LadderProfile.STANDARD
-        private set
+    var currentProfile: LadderProfile = LadderProfile.LOW   // 默认启动超低网（后端登录也重置成 low）
+        private set(value) {
+            field = value
+            currentTypeKey = srtProfileKey(value)
+        }
     var currentLadder: Map<LadderProfile, LadderPreset> = emptyMap()
         private set
     
@@ -2029,6 +2038,8 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
     // ⭐ UI 采集帧率：独立计数基线（在循环层每秒算一次，不依赖 statsPC/getStats 回调）
     private var uiLastCapFrameCount: Long = 0
     private var uiLastCapSampleMs: Long = 0
+    // 最近一次有 PC 在线的时刻（0 = 推流循环刚开始）
+    private var noPcSinceMs: Long = 0
 
     // ⭐ §53.21：原「中继码率钳制(p2pPathIsRelay/relayMaxKbps) + 链路择优限频(lastRelaySwitchMs/
     //   relaySwitchGapMs)」已随 TURN 中继物理删除——P2P 只有局域网直连，无中继路径可钳可切。
@@ -2039,6 +2050,7 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
         lastFramesEncoded = 0; lastFramesSent = 0; lastMeiduiLogMs = 0; lastNackCount = 0
         lastCapFrameCount = capFrameCount
         uiLastCapFrameCount = capFrameCount; uiLastCapSampleMs = 0
+        noPcSinceMs = 0
         
         statsJob = scope.launch {
             while (isActive) {
@@ -2069,11 +2081,21 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
                         val reconnectingNow = p2pReconnecting && !pcConnected
                         // ⭐ §53.2：在线台数走 PC_PRESENCE（与画面无关），与上面的 pcConnected(在看) 分开
                         val onlinePcs = WebSocketManager.instance.onlinePcCount()
+                        // 没有 PC 在线 20 秒 → 回超低网（PC 上线后由 PC 手动切高档）
+                        if (onlinePcs > 0 || noPcSinceMs == 0L) noPcSinceMs = nowMs
+                        val dropToLow = onlinePcs == 0 && !usingOtgCamera
+                                && currentProfile != LadderProfile.LOW
+                                && nowMs - noPcSinceMs >= NO_PC_LOW_AFTER_MS
+                        if (dropToLow) noPcSinceMs = nowMs
                         withContext(Dispatchers.Main) {
                             onCapFpsUpdate?.invoke(capFpsUi)
                             onPcConnectedUpdate?.invoke(pcConnected)
                             onReconnectingUpdate?.invoke(reconnectingNow)
                             onPcOnlineUpdate?.invoke(onlinePcs)
+                            if (dropToLow) {
+                                Log.d(TAG, "📉 没有 PC 在线 ${NO_PC_LOW_AFTER_MS / 1000}s → 切回超低网")
+                                applyRemoteConfig(mapOf("ptype" to "type", "type" to "low"))
+                            }
                         }
                     }
                 }
