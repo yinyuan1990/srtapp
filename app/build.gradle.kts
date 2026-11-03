@@ -14,8 +14,8 @@ android {
         applicationId = "com.fz.srtapp"
         minSdk = 24
         targetSdk = 35
-        versionCode = 18
-        versionName = "18.0"
+        versionCode = 19
+        versionName = "19.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
