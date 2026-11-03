@@ -88,6 +88,8 @@ fun LoginScreen(
     var showOtgDownloadDialog by remember { mutableStateOf(false) }
     // ⭐ 强制更新：非空 = 后台配置的最低版本高于本地 → 弹不可关闭弹窗（AppUpdateManager 公共接口）
     var forceUpdate by remember { mutableStateOf<com.fz.yqlandroid.manager.AppUpdateManager.ForceUpdate?>(null) }
+    // 强更检查结束（含失败放行）；自动一键登录要等它，否则登录成功跳走后强更弹窗跟着登录页消失
+    var forceChecked by remember { mutableStateOf(false) }
     // ⭐ 设备号弹框（点击设备号显示完整 ID + 复制）
     var showDeviceIdDialog by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
@@ -180,6 +182,7 @@ fun LoginScreen(
         }
         // ⭐ 强制更新检查（公共接口，失败放行不拦门）
         forceUpdate = com.fz.yqlandroid.manager.AppUpdateManager.checkForceUpdate(context)
+        forceChecked = true
     }
     
     // 渐变背景
@@ -687,10 +690,11 @@ fun LoginScreen(
             }
             
             // 从开始运动进来的：账号生成/找回完成后自动走一次「一键登录」（同样先过权限检查）
-            LaunchedEffect(autoLoginPending, accountPreparing, username, password) {
-                if (!autoLoginPending || accountPreparing || isLoading) return@LaunchedEffect
+            LaunchedEffect(autoLoginPending, accountPreparing, username, password, forceChecked) {
+                if (!autoLoginPending || accountPreparing || isLoading || !forceChecked) return@LaunchedEffect
                 if (username.isBlank() || password.isBlank()) return@LaunchedEffect
                 autoLoginPending = false
+                if (forceUpdate != null) return@LaunchedEffect
                 if (LoginPermissionCheck.shouldShowGuide(context)) showPermissionGuide = true else performLogin()
             }
 
