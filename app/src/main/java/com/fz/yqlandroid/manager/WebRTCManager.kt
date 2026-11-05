@@ -1245,6 +1245,9 @@ class WebRTCManager(private val context: Context) : P2PManager.DataSource {
     private fun startSrtPublish() {
         currentConnMode = ConnMode.SRT
         effectiveConnectstype = 3
+        // 停流时 stopSrtPublish 清空了档位；预览一直开着的重推（PC 重置 / 自动恢复 / 手动停了再推）不会再走 srtVideoReq，
+        //   不补回来心跳 profile 一直是空，后端不按档位扣流量
+        effectiveSrtProfile = srtPlan().profile
         H265Support.forceH264ForNonP2P()
         SessionPolicy.setManualReason("SRS直推")
         srtLastStateText = ""
